@@ -66,6 +66,7 @@ async function createProperties() {
       bedrooms: 3,
       bathrooms: 2,
       surface_m2: 120,
+      airbnb_url: "https://www.airbnb.es/rooms/demo-javea",
       cover_image_url: "https://images.unsplash.com/photo-1518780664697-55e3ad937233?q=80&w=1200&auto=format&fit=crop",
       notes: "Casa de pueblo con jardin, ideal vacaciones familiares"
     }
