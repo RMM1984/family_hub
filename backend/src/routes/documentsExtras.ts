@@ -7,7 +7,11 @@ export const documentsExtrasRouter = Router();
 
 documentsExtrasRouter.get("/alerts", async (req: AuthedRequest, res) => {
   const result = await query(
-    "select *, expiration_date - current_date as days_to_expire from documents where active = true and expiration_date <= current_date + (alert_days_before || ' days')::interval order by expiration_date asc",
+    `select d.*, p.alias as property_alias, p.address as property_address, d.expiration_date - current_date as days_to_expire
+     from documents d
+     join properties p on p.id = d.property_id
+     where d.active = true and d.expiration_date <= current_date + (d.alert_days_before || ' days')::interval
+     order by d.expiration_date asc`,
     [],
     req.schemaName
   );

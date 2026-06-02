@@ -12,6 +12,13 @@ export interface Property {
   bathrooms?: number;
   surface_m2?: number;
   notes?: string;
+  month_income?: number;
+  month_expenses?: number;
+  month_profit?: number;
+  next_document_title?: string | null;
+  next_document_expiration?: string | null;
+  next_check_in?: string | null;
+  next_guest_name?: string | null;
 }
 
 export interface Expense {
@@ -22,6 +29,8 @@ export interface Expense {
   amount: number;
   expense_date: string;
   description?: string;
+  property_alias?: string;
+  property_address?: string;
 }
 
 export interface Income {
@@ -34,6 +43,8 @@ export interface Income {
   check_in?: string;
   check_out?: string;
   nights?: number;
+  property_alias?: string;
+  property_address?: string;
 }
 
 export interface DocumentItem {
@@ -46,6 +57,20 @@ export interface DocumentItem {
   expiration_date?: string;
   cost?: number;
   days_to_expire?: number;
+  property_alias?: string;
+  property_address?: string;
+}
+
+export interface Movement {
+  id: string;
+  kind: "Ingreso" | "Gasto";
+  property_id: string;
+  property_alias: string;
+  movement_date: string;
+  amount: number | null;
+  description?: string;
+  guest_name?: string;
+  provider?: string;
 }
 
 export interface DashboardSummary {
@@ -57,5 +82,6 @@ export interface DashboardSummary {
   };
   properties: Property[];
   alerts: DocumentItem[];
+  latest_movements?: Movement[];
   series: Array<{ label: string; ingresos: number; gastos: number }>;
 }

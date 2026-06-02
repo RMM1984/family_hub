@@ -1,8 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarSync, Upload } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Building2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { getIncome } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -14,18 +14,16 @@ export default function IncomePage() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold">Ingresos</h2>
-          <p className="text-sm text-slate-500">Reservas, alquileres e importes reales.</p>
+          <h2 className="text-2xl font-bold">Ingresos globales</h2>
+          <p className="text-sm text-slate-500">Reservas agregadas con vivienda visible.</p>
         </div>
-        <div className="flex gap-2">
-          <Button className="bg-meadow hover:bg-green-700"><CalendarSync className="h-4 w-4" />Airbnb</Button>
-          <Button className="bg-sun hover:bg-amber-700"><Upload className="h-4 w-4" />CSV</Button>
-        </div>
+        <Link href="/properties" className="h-10 rounded-md bg-meadow px-4 py-2 text-sm font-semibold text-white">Elegir vivienda</Link>
       </div>
       <Card className="overflow-x-auto">
-        <table className="w-full min-w-[680px] text-left text-sm">
+        <table className="w-full min-w-[760px] text-left text-sm">
           <thead className="bg-slate-100 text-slate-600">
             <tr>
+              <th className="p-4">Vivienda</th>
               <th className="p-4">Huesped</th>
               <th className="p-4">Entrada</th>
               <th className="p-4">Salida</th>
@@ -37,7 +35,8 @@ export default function IncomePage() {
           <tbody className="divide-y divide-slate-200">
             {data.map((income) => (
               <tr key={income.id}>
-                <td className="p-4 font-semibold">{income.guest_name ?? "Reserva"}</td>
+                <td className="p-4 font-semibold"><span className="inline-flex items-center gap-1"><Building2 className="h-4 w-4" />{income.property_alias ?? "Vivienda"}</span></td>
+                <td className="p-4">{income.guest_name ?? "Reserva"}</td>
                 <td className="p-4">{formatDate(income.check_in)}</td>
                 <td className="p-4">{formatDate(income.check_out)}</td>
                 <td className="p-4">{income.nights ?? "-"}</td>

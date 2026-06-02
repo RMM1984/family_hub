@@ -13,7 +13,14 @@ export const mockProperties: Property[] = [
     bedrooms: 2,
     bathrooms: 1,
     capacity_guests: 4,
-    surface_m2: 75
+    surface_m2: 75,
+    month_income: 720,
+    month_expenses: 131.2,
+    month_profit: 588.8,
+    next_document_title: "Seguro hogar",
+    next_document_expiration: "2026-07-17",
+    next_check_in: "2026-06-08",
+    next_guest_name: "Laura Martin"
   },
   {
     id: "2",
@@ -27,25 +34,32 @@ export const mockProperties: Property[] = [
     bedrooms: 3,
     bathrooms: 2,
     capacity_guests: 6,
-    surface_m2: 120
+    surface_m2: 120,
+    month_income: 1320,
+    month_expenses: 45,
+    month_profit: 1275,
+    next_document_title: "Licencia turistica",
+    next_document_expiration: "2031-06-02",
+    next_check_in: "2026-06-15",
+    next_guest_name: "Pablo Gomez"
   }
 ];
 
 export const mockExpenses: Expense[] = [
-  { id: "e1", property_id: "1", category: "electricity", provider: "Iberdrola", amount: 96.2, expense_date: "2026-05-15", description: "Factura mensual" },
-  { id: "e2", property_id: "2", category: "cleaning", provider: "Limpiezas Ana", amount: 45, expense_date: "2026-05-19", description: "Limpieza reserva" },
-  { id: "e3", property_id: "1", category: "internet", provider: "Simyo", amount: 35, expense_date: "2026-05-01", description: "Fibra" }
+  { id: "e1", property_id: "1", property_alias: "Apartamento Centro", category: "electricity", provider: "Iberdrola", amount: 96.2, expense_date: "2026-05-15", description: "Factura mensual" },
+  { id: "e2", property_id: "2", property_alias: "Casa Pueblo", category: "cleaning", provider: "Limpiezas Ana", amount: 45, expense_date: "2026-05-19", description: "Limpieza reserva" },
+  { id: "e3", property_id: "1", property_alias: "Apartamento Centro", category: "internet", provider: "Simyo", amount: 35, expense_date: "2026-05-01", description: "Fibra" }
 ];
 
 export const mockIncome: Income[] = [
-  { id: "i1", property_id: "1", source: "airbnb", amount: 720, income_date: "2026-05-12", guest_name: "Laura Martin", check_in: "2026-05-08", check_out: "2026-05-12", nights: 4 },
-  { id: "i2", property_id: "2", source: "airbnb", amount: 1320, income_date: "2026-05-22", guest_name: "Pablo Gomez", check_in: "2026-05-15", check_out: "2026-05-22", nights: 7 }
+  { id: "i1", property_id: "1", property_alias: "Apartamento Centro", source: "airbnb", amount: 720, income_date: "2026-05-12", guest_name: "Laura Martin", check_in: "2026-05-08", check_out: "2026-05-12", nights: 4 },
+  { id: "i2", property_id: "2", property_alias: "Casa Pueblo", source: "airbnb", amount: 1320, income_date: "2026-05-22", guest_name: "Pablo Gomez", check_in: "2026-05-15", check_out: "2026-05-22", nights: 7 }
 ];
 
 export const mockDocuments: DocumentItem[] = [
-  { id: "d1", property_id: "1", type: "insurance", title: "Seguro hogar", provider: "Mapfre", expiration_date: "2026-07-17", cost: 280, days_to_expire: 45 },
-  { id: "d2", property_id: "1", type: "certificate", title: "Certificado energetico", provider: "Tecnico certificado", expiration_date: "2026-07-02", cost: 90, days_to_expire: 30 },
-  { id: "d3", property_id: "2", type: "license", title: "Licencia turistica", provider: "Ayuntamiento", expiration_date: "2031-06-02", cost: 0, days_to_expire: 1825 }
+  { id: "d1", property_id: "1", property_alias: "Apartamento Centro", type: "insurance", title: "Seguro hogar", provider: "Mapfre", expiration_date: "2026-07-17", cost: 280, days_to_expire: 45 },
+  { id: "d2", property_id: "1", property_alias: "Apartamento Centro", type: "certificate", title: "Certificado energetico", provider: "Tecnico certificado", expiration_date: "2026-07-02", cost: 90, days_to_expire: 30 },
+  { id: "d3", property_id: "2", property_alias: "Casa Pueblo", type: "license", title: "Licencia turistica", provider: "Ayuntamiento", expiration_date: "2031-06-02", cost: 0, days_to_expire: 1825 }
 ];
 
 export const mockDashboard: DashboardSummary = {
@@ -57,6 +71,10 @@ export const mockDashboard: DashboardSummary = {
   },
   properties: mockProperties,
   alerts: mockDocuments.slice(0, 2),
+  latest_movements: [
+    { id: "i1", kind: "Ingreso", property_id: "1", property_alias: "Apartamento Centro", movement_date: "2026-05-12", amount: 720, guest_name: "Laura Martin" },
+    { id: "e2", kind: "Gasto", property_id: "2", property_alias: "Casa Pueblo", movement_date: "2026-05-19", amount: 45, provider: "Limpiezas Ana" }
+  ],
   series: [
     { label: "jun", ingresos: 1200, gastos: 360 },
     { label: "jul", ingresos: 2180, gastos: 440 },

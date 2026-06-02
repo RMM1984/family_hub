@@ -16,8 +16,13 @@ export async function runMigrations(schemaName?: string) {
     if (schemaName) {
       await client.query(`create schema if not exists ${pg.escapeIdentifier(schemaName)}`);
       await client.query(`set search_path to ${pg.escapeIdentifier(schemaName)}, public`);
-      const tenantSql = await fs.readFile(path.join(migrationsDir, "001_tenant_schema.sql"), "utf8");
-      await client.query(tenantSql);
+      const tenantMigrations = (await fs.readdir(migrationsDir))
+        .filter((file) => file.endsWith(".sql") && file !== "000_public_schema.sql")
+        .sort();
+      for (const file of tenantMigrations) {
+        const sql = await fs.readFile(path.join(migrationsDir, file), "utf8");
+        await client.query(sql);
+      }
     }
   } finally {
     await client.end();

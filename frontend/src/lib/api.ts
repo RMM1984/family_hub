@@ -29,6 +29,13 @@ export async function login(email: string, password: string) {
 
 export const getDashboard = () => withFallback(() => api.get("/dashboard/summary").then((r) => r.data.data), mockDashboard);
 export const getProperties = () => withFallback(() => api.get("/properties").then((r) => r.data.data), mockProperties);
+export const getProperty = (id: string) => withFallback(() => api.get(`/properties/${id}`).then((r) => r.data.data), mockProperties.find((property) => property.id === id) ?? mockProperties[0]);
 export const getExpenses = () => withFallback(() => api.get("/expenses").then((r) => r.data.data), mockExpenses);
 export const getIncome = () => withFallback(() => api.get("/income").then((r) => r.data.data), mockIncome);
 export const getDocuments = () => withFallback(() => api.get("/documents").then((r) => r.data.data), mockDocuments);
+export const getPropertyExpenses = (id: string) => withFallback(() => api.get(`/properties/${id}/expenses`).then((r) => r.data.data), mockExpenses.filter((expense) => expense.property_id === id));
+export const getPropertyIncome = (id: string) => withFallback(() => api.get(`/properties/${id}/income`).then((r) => r.data.data), mockIncome.filter((income) => income.property_id === id));
+export const getPropertyDocuments = (id: string) => withFallback(() => api.get(`/properties/${id}/documents`).then((r) => r.data.data), mockDocuments.filter((document) => document.property_id === id));
+export const createPropertyExpense = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/expenses`, data).then((r) => r.data.data);
+export const createPropertyIncome = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/income`, data).then((r) => r.data.data);
+export const createPropertyDocument = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/documents`, data).then((r) => r.data.data);

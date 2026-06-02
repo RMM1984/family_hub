@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { FileText, RefreshCw } from "lucide-react";
+import { Building2, FileText, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { getDocuments } from "@/lib/api";
@@ -19,9 +20,12 @@ export default function DocumentsPage() {
   const { data = [] } = useQuery<DocumentItem[]>({ queryKey: ["documents"], queryFn: getDocuments });
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-2xl font-bold">Documentos</h2>
-        <p className="text-sm text-slate-500">Vencimientos, historico y renovaciones.</p>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">Documentos globales</h2>
+          <p className="text-sm text-slate-500">Vencimientos agregados con vivienda visible.</p>
+        </div>
+        <Link href="/properties" className="hidden h-10 rounded-md bg-meadow px-4 py-2 text-sm font-semibold text-white sm:block">Elegir vivienda</Link>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         {data.map((document) => (
@@ -35,6 +39,7 @@ export default function DocumentsPage() {
                   <div>
                     <h3 className="font-bold">{document.title}</h3>
                     <p className="text-sm text-slate-500">{document.provider ?? document.type}</p>
+                    <p className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-ink"><Building2 className="h-4 w-4" />{document.property_alias ?? "Vivienda"}</p>
                   </div>
                   <span className={`rounded-full px-3 py-1 text-xs font-semibold ${tone(document.days_to_expire)}`}>{document.days_to_expire ?? "-"} dias</span>
                 </div>

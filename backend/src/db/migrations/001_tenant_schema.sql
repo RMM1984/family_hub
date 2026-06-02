@@ -24,7 +24,7 @@ create table if not exists properties (
 
 create table if not exists expenses (
   id uuid primary key default gen_random_uuid(),
-  property_id uuid references properties(id),
+  property_id uuid not null references properties(id),
   category text check (category in ('electricity','water','internet','community','cleaning','ibi','garbage','home_insurance','liability_insurance','rental_insurance','maintenance','repairs','furniture','airbnb_commission','mortgage','other')),
   provider text,
   amount numeric not null,
@@ -89,3 +89,7 @@ create table if not exists ical_sync_log (
   reservations_imported integer,
   errors text
 );
+
+create index if not exists idx_expenses_property_id on expenses(property_id);
+create index if not exists idx_income_property_id on income(property_id);
+create index if not exists idx_documents_property_id on documents(property_id);
