@@ -1,0 +1,34 @@
+"use client";
+
+import axios from "axios";
+import { mockDashboard, mockDocuments, mockExpenses, mockIncome, mockProperties } from "./mock";
+
+export const api = axios.create({
+  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"
+});
+
+api.interceptors.request.use((config) => {
+  const token = typeof window !== "undefined" ? localStorage.getItem("hogarflow_token") : null;
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+async function withFallback<T>(fn: () => Promise<T>, fallback: T) {
+  try {
+    return await fn();
+  } catch {
+    return fallback;
+  }
+}
+
+export async function login(email: string, password: string) {
+  const response = await api.post("/auth/login", { email, password });
+  localStorage.setItem("hogarflow_token", response.data.data.token);
+  return response.data.data;
+}
+
+export const getDashboard = () => withFallback(() => api.get("/dashboard/summary").then((r) => r.data.data), mockDashboard);
+export const getProperties = () => withFallback(() => api.get("/properties").then((r) => r.data.data), mockProperties);
+export const getExpenses = () => withFallback(() => api.get("/expenses").then((r) => r.data.data), mockExpenses);
+export const getIncome = () => withFallback(() => api.get("/income").then((r) => r.data.data), mockIncome);
+export const getDocuments = () => withFallback(() => api.get("/documents").then((r) => r.data.data), mockDocuments);

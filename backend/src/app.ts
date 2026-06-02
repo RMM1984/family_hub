@@ -1,0 +1,25 @@
+import cors from "cors";
+import express from "express";
+import { authRouter } from "./routes/auth.js";
+import { dashboardRouter } from "./routes/dashboard.js";
+import { documentsExtrasRouter } from "./routes/documentsExtras.js";
+import { incomeExtrasRouter } from "./routes/incomeExtras.js";
+import { resourceRouter } from "./routes/resource.js";
+import { verifyJWT } from "./middleware/verifyJWT.js";
+import { setSchema } from "./middleware/setSchema.js";
+import { errorHandler } from "./middleware/errorHandler.js";
+
+export const app = express();
+
+app.use(cors());
+app.use(express.json({ limit: "10mb" }));
+app.get("/health", (_req, res) => res.json({ status: "ok", app: "Hogarflow" }));
+app.use("/auth", authRouter);
+app.use(verifyJWT, setSchema);
+app.use("/properties", resourceRouter("properties"));
+app.get("/expenses/summary", (_req, res) => res.json({ data: [] }));
+app.use("/expenses", resourceRouter("expenses"));
+app.use("/income", incomeExtrasRouter, resourceRouter("income"));
+app.use("/documents", documentsExtrasRouter, resourceRouter("documents"));
+app.use("/dashboard", dashboardRouter);
+app.use(errorHandler);

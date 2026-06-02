@@ -1,0 +1,9 @@
+node_modules
+dist
+.next
+.env
+.env.*
+*.log
+family_hub_secrets.env
+family_hub_secrets.txt
+coverage
