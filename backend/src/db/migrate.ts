@@ -29,6 +29,6 @@ export async function runMigrations(schemaName?: string) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {
+if (process.argv[1]?.replaceAll("\\", "/").endsWith("/migrate.ts") || process.argv[1]?.replaceAll("\\", "/").endsWith("/migrate.js")) {
   runMigrations(process.argv[2]).then(() => console.log("Migraciones aplicadas"));
 }

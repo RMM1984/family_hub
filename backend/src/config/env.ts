@@ -10,7 +10,12 @@ const schema = z.object({
   NODE_ENV: z.string().default("development"),
   PORT: z.coerce.number().default(8080),
   SUPABASE_URL: z.string().optional(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().optional()
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REDIRECT_URI: z.string().optional(),
+  GOOGLE_TOKEN_ENCRYPTION_KEY: z.string().optional(),
+  GOOGLE_DRIVE_SCOPE: z.string().default("https://www.googleapis.com/auth/drive.metadata.readonly")
 });
 
 export const env = schema.parse(process.env);

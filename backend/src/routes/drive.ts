@@ -1,0 +1,43 @@
+import { Router } from "express";
+import type { Response } from "express";
+import { requireRole } from "../middleware/requireRole.js";
+import type { AuthedRequest } from "../types.js";
+import * as drive from "../services/driveService.js";
+
+export const driveRouter = Router({ mergeParams: true });
+
+driveRouter.get("/", async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.getDriveState(req.schemaName!, String(req.params.propertyId)) });
+});
+
+driveRouter.get("/auth-url", async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.getAuthUrl(req.schemaName!, String(req.params.propertyId)) });
+});
+
+driveRouter.post("/connect", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.status(201).json({ data: await drive.connectFolder(req.schemaName!, String(req.params.propertyId), req.user!.id, req.body) });
+});
+
+driveRouter.post("/sync", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.syncFolder(req.schemaName!, String(req.params.propertyId)) });
+});
+
+driveRouter.get("/files", async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.listFiles(req.schemaName!, String(req.params.propertyId)) });
+});
+
+driveRouter.patch("/files/:fileId", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.updateFile(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), req.body) });
+});
+
+driveRouter.post("/files/:fileId/link-expense", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.linkExpense(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), String(req.body.expense_id)) });
+});
+
+driveRouter.post("/files/:fileId/link-document", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.linkDocument(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), String(req.body.document_id)) });
+});
+
+driveRouter.delete("/disconnect", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.disconnect(req.schemaName!, String(req.params.propertyId)) });
+});

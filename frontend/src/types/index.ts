@@ -73,6 +73,45 @@ export interface Movement {
   provider?: string;
 }
 
+export interface DriveIntegration {
+  id: string;
+  property_id: string;
+  provider: "google_drive";
+  folder_id: string;
+  folder_name?: string;
+  folder_url?: string;
+  connected_at?: string;
+  last_sync_at?: string;
+  is_active: boolean;
+}
+
+export interface DriveFile {
+  id: string;
+  property_id: string;
+  drive_folder_id: string;
+  drive_file_id: string;
+  name: string;
+  mime_type?: string;
+  size?: number;
+  web_view_link?: string;
+  web_content_link?: string;
+  created_time?: string;
+  modified_time?: string;
+  document_type?: string;
+  linked_expense_id?: string;
+  linked_document_id?: string;
+  linked_expense_description?: string;
+  linked_document_title?: string;
+  expiration_date?: string;
+}
+
+export interface DriveState {
+  integration: DriveIntegration | null;
+  files: DriveFile[];
+  google_configured: boolean;
+  scope: string;
+}
+
 export interface DashboardSummary {
   kpis: {
     net_profit_month: number;

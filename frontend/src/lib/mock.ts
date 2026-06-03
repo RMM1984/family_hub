@@ -1,4 +1,4 @@
-import type { DashboardSummary, DocumentItem, Expense, Income, Property } from "@/types";
+import type { DashboardSummary, DocumentItem, DriveState, Expense, Income, Property } from "@/types";
 
 export const mockProperties: Property[] = [
   {
@@ -61,6 +61,13 @@ export const mockDocuments: DocumentItem[] = [
   { id: "d2", property_id: "1", property_alias: "Apartamento Centro", type: "certificate", title: "Certificado energetico", provider: "Tecnico certificado", expiration_date: "2026-07-02", cost: 90, days_to_expire: 30 },
   { id: "d3", property_id: "2", property_alias: "Casa Pueblo", type: "license", title: "Licencia turistica", provider: "Ayuntamiento", expiration_date: "2031-06-02", cost: 0, days_to_expire: 1825 }
 ];
+
+export const mockDriveState: DriveState = {
+  integration: null,
+  files: [],
+  google_configured: false,
+  scope: "https://www.googleapis.com/auth/drive.metadata.readonly"
+};
 
 export const mockDashboard: DashboardSummary = {
   kpis: {

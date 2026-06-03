@@ -1,7 +1,7 @@
 "use client";
 
 import axios from "axios";
-import { mockDashboard, mockDocuments, mockExpenses, mockIncome, mockProperties } from "./mock";
+import { mockDashboard, mockDocuments, mockDriveState, mockExpenses, mockIncome, mockProperties } from "./mock";
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"
@@ -39,3 +39,9 @@ export const getPropertyDocuments = (id: string) => withFallback(() => api.get(`
 export const createPropertyExpense = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/expenses`, data).then((r) => r.data.data);
 export const createPropertyIncome = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/income`, data).then((r) => r.data.data);
 export const createPropertyDocument = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/documents`, data).then((r) => r.data.data);
+export const getPropertyDrive = (id: string) => withFallback(() => api.get(`/properties/${id}/drive`).then((r) => r.data.data), mockDriveState);
+export const connectPropertyDrive = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/drive/connect`, data).then((r) => r.data.data);
+export const syncPropertyDrive = (id: string) => api.post(`/properties/${id}/drive/sync`).then((r) => r.data.data);
+export const updateDriveFile = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/drive/files/${fileId}`, data).then((r) => r.data.data);
+export const linkDriveFileExpense = (propertyId: string, fileId: string, expenseId: string) => api.post(`/properties/${propertyId}/drive/files/${fileId}/link-expense`, { expense_id: expenseId }).then((r) => r.data.data);
+export const linkDriveFileDocument = (propertyId: string, fileId: string, documentId: string) => api.post(`/properties/${propertyId}/drive/files/${fileId}/link-document`, { document_id: documentId }).then((r) => r.data.data);
