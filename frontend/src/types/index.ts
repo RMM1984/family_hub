@@ -33,9 +33,39 @@ export interface Expense {
   provider?: string;
   amount: number;
   expense_date: string;
+  expense_month?: string | null;
+  monthly_category?: string | null;
+  data_origin?: string | null;
+  source_method?: string | null;
+  is_demo?: boolean;
   description?: string;
   property_alias?: string;
   property_address?: string;
+}
+
+export interface MonthlyExpenseItem {
+  id?: string | null;
+  category: "electricity" | "water" | "internet" | "cleaning" | "repairs";
+  label: string;
+  amount: number;
+}
+
+export interface MonthlyExpenseState {
+  month: string;
+  items: MonthlyExpenseItem[];
+  total: number;
+}
+
+export interface MonthlyProfitRow {
+  month: string;
+  income_total: number;
+  expense_total: number;
+  net_profit: number;
+}
+
+export interface MonthlyProfitStats {
+  year: number;
+  months: MonthlyProfitRow[];
 }
 
 export interface Income {

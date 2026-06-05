@@ -34,6 +34,9 @@ export const getExpenses = () => withFallback(() => api.get("/expenses").then((r
 export const getIncome = () => withFallback(() => api.get("/income").then((r) => r.data.data), mockIncome);
 export const getDocuments = () => withFallback(() => api.get("/documents").then((r) => r.data.data), mockDocuments);
 export const getPropertyExpenses = (id: string) => withFallback(() => api.get(`/properties/${id}/expenses`).then((r) => r.data.data), mockExpenses.filter((expense) => expense.property_id === id));
+export const getPropertyMonthlyExpenses = (id: string, month: string) => api.get(`/properties/${id}/expenses/monthly`, { params: { month } }).then((r) => r.data.data);
+export const savePropertyMonthlyExpenses = (id: string, data: Record<string, unknown>) => api.put(`/properties/${id}/expenses/monthly`, data).then((r) => r.data.data);
+export const getPropertyMonthlyStats = (id: string, year: number) => api.get(`/properties/${id}/stats/monthly`, { params: { year } }).then((r) => r.data.data);
 export const getPropertyIncome = (id: string) => withFallback(() => api.get(`/properties/${id}/income`).then((r) => r.data.data), mockIncome.filter((income) => income.property_id === id));
 export const getPropertyDocuments = (id: string) => withFallback(() => api.get(`/properties/${id}/documents`).then((r) => r.data.data), mockDocuments.filter((document) => document.property_id === id));
 export const createPropertyExpense = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/expenses`, data).then((r) => r.data.data);

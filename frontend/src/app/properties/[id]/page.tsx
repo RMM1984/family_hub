@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,12 +26,15 @@ import {
   getPropertyDriveAuthUrl,
   getPropertyExpenses,
   getPropertyIncome,
+  getPropertyMonthlyExpenses,
+  getPropertyMonthlyStats,
   getPropertyReservations,
   linkDriveFileDocument,
   linkDriveFileExpense,
   registerDriveFileExpense,
   savePropertyAirbnbIcal,
   saveDriveFileDocument,
+  savePropertyMonthlyExpenses,
   syncAllPropertyDrive,
   syncPropertyAirbnb,
   syncDriveFolder,
@@ -44,7 +47,7 @@ import {
   updateReservationGuestCount
 } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/format";
-import type { AirbnbEarningsImport, AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property, Reservation } from "@/types";
+import type { AirbnbEarningsImport, AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, MonthlyExpenseState, MonthlyProfitStats, Property, Reservation } from "@/types";
 
 type Tab = "Resumen" | "Reservas" | "Contrato / Renta" | "Ingresos" | "Gastos" | "Documentos / Drive" | "Estadisticas";
 
@@ -58,6 +61,7 @@ export default function PropertyDetailPage() {
   const [showDemoData, setShowDemoData] = useState(false);
   const [incomeFilter, setIncomeFilter] = useState("todos");
   const [earningsImport, setEarningsImport] = useState<AirbnbEarningsImport | null>(null);
+  const [expenseMonth, setExpenseMonth] = useState(currentMonthKey());
   const { data: property } = useQuery<Property>({ queryKey: ["property", propertyId], queryFn: () => getProperty(propertyId) });
   const operationType = property?.operation_type ?? property?.rental_type ?? (property?.type === "airbnb" ? "tourist" : property?.type ?? "mixed");
   const showAirbnb = operationType === "tourist" || operationType === "mixed" || Boolean(property?.airbnb_enabled);
@@ -65,6 +69,8 @@ export default function PropertyDetailPage() {
   const { data: reservations = [] } = useQuery<Reservation[]>({ queryKey: ["property-reservations", propertyId], queryFn: () => getPropertyReservations(propertyId) });
   const { data: airbnbStats } = useQuery<AirbnbStats>({ queryKey: ["property-airbnb-stats", propertyId], queryFn: () => getPropertyAirbnbStats(propertyId), enabled: showAirbnb });
   const { data: expenses = [] } = useQuery<Expense[]>({ queryKey: ["property-expenses", propertyId], queryFn: () => getPropertyExpenses(propertyId) });
+  const { data: monthlyExpenses } = useQuery<MonthlyExpenseState>({ queryKey: ["property-monthly-expenses", propertyId, expenseMonth], queryFn: () => getPropertyMonthlyExpenses(propertyId, expenseMonth) });
+  const { data: monthlyStats } = useQuery<MonthlyProfitStats>({ queryKey: ["property-monthly-stats", propertyId, Number(expenseMonth.slice(0, 4))], queryFn: () => getPropertyMonthlyStats(propertyId, Number(expenseMonth.slice(0, 4))) });
   const { data: documents = [] } = useQuery<DocumentItem[]>({ queryKey: ["property-documents", propertyId], queryFn: () => getPropertyDocuments(propertyId) });
   const { data: drive } = useQuery<DriveState>({ queryKey: ["property-drive", propertyId], queryFn: () => getPropertyDrive(propertyId) });
   const {
@@ -133,11 +139,14 @@ export default function PropertyDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["property-reservations", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-airbnb-stats", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-expenses", propertyId] });
+    queryClient.invalidateQueries({ queryKey: ["property-monthly-expenses", propertyId, expenseMonth] });
+    queryClient.invalidateQueries({ queryKey: ["property-monthly-stats", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-documents", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["properties"] });
     queryClient.invalidateQueries({ queryKey: ["dashboard"] });
   };
   const expenseMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyExpense(propertyId, data), onSuccess: refresh });
+  const monthlyExpenseMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => savePropertyMonthlyExpenses(propertyId, data), onSuccess: refresh });
   const incomeMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyIncome(propertyId, data), onSuccess: refresh });
   const propertyOperationMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => updatePropertyOperation(propertyId, data), onSuccess: refresh });
   const airbnbIcalMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => savePropertyAirbnbIcal(propertyId, data), onSuccess: refresh });
@@ -289,13 +298,22 @@ export default function PropertyDetailPage() {
       )}
 
       {tab === "Gastos" && (
-        <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
-          <ExpenseForm pending={expenseMutation.isPending} onSubmit={(data) => expenseMutation.mutate(data)} />
-          <Card className="overflow-hidden">
-            {expenses.map((item) => (
-              <Row key={item.id} title={item.provider ?? item.category} subtitle={`${item.description ?? "Gasto"} Â· ${formatDate(item.expense_date)}`} amount={item.amount} />
-            ))}
-          </Card>
+        <section className="space-y-5">
+          <MonthlyExpensesPanel
+            month={expenseMonth}
+            data={monthlyExpenses}
+            pending={monthlyExpenseMutation.isPending}
+            onMonthChange={setExpenseMonth}
+            onSubmit={(data) => monthlyExpenseMutation.mutate(data)}
+          />
+          <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
+            <ExpenseForm pending={expenseMutation.isPending} onSubmit={(data) => expenseMutation.mutate(data)} />
+            <Card className="overflow-hidden">
+              {expenses.map((item) => (
+                <Row key={item.id} title={item.provider ?? labelExpenseCategory(item.category)} subtitle={`${item.description ?? "Gasto"} · ${formatDate(item.expense_date)}`} amount={item.amount} />
+              ))}
+            </Card>
+          </section>
         </section>
       )}
 
@@ -371,6 +389,8 @@ export default function PropertyDetailPage() {
             <ExpenseStat title="Reparaciones" subtitle="Mantenimiento y reparaciones" amount={profitabilityStats.repairsExpenses} />
             <ExpenseStat title="Documentos activos" subtitle="Documentos registrados en esta vivienda" amount={documents.length} plain />
           </section>
+
+          <MonthlyProfitPanel stats={monthlyStats} />
 
           <Card className="p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -582,6 +602,72 @@ function OperationTypeControl({ value, airbnbEnabled, pending, onChange }: { val
       </label>
       <Button disabled={pending} onClick={() => onChange({ operation_type: operationType, airbnb_enabled: enabled })} className="bg-ink">Guardar</Button>
     </div>
+  );
+}
+
+function MonthlyExpensesPanel({
+  month,
+  data,
+  pending,
+  onMonthChange,
+  onSubmit
+}: {
+  month: string;
+  data?: MonthlyExpenseState;
+  pending: boolean;
+  onMonthChange: (month: string) => void;
+  onSubmit: (data: Record<string, unknown>) => void;
+}) {
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const next = Object.fromEntries((data?.items ?? monthlyExpenseDefaults()).map((item) => [item.category, String(item.amount || "")]));
+    setAmounts(next);
+  }, [data, month]);
+  const items = data?.items ?? monthlyExpenseDefaults();
+  const total = items.reduce((sum, item) => sum + Number(amounts[item.category] || 0), 0);
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSubmit({
+      month,
+      items: items.map((item) => ({ category: item.category, amount: Number(String(amounts[item.category] || "0").replace(",", ".")) || 0 }))
+    });
+  }
+  return (
+    <Card className="p-5">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="font-bold">Gastos de {formatMonthLabel(month)}</h3>
+          <p className="text-sm text-slate-500">Introduce gastos mensuales rápidos por vivienda.</p>
+        </div>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Mes</span>
+          <input type="month" value={month} onChange={(event) => onMonthChange(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3" />
+        </label>
+      </div>
+      <form onSubmit={submit} className="grid gap-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {items.map((item) => (
+            <label key={item.category} className="block">
+              <span className="mb-1 block text-sm font-medium">{item.label}</span>
+              <input
+                value={amounts[item.category] ?? ""}
+                onChange={(event) => setAmounts((current) => ({ ...current, [item.category]: event.target.value }))}
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0,00"
+                className="h-10 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-meadow"
+              />
+            </label>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-slate-50 p-4">
+          <p className="text-sm font-semibold text-slate-600">Total del mes</p>
+          <p className="text-2xl font-bold">{formatCurrency(total)}</p>
+          <Button disabled={pending} className="bg-ink">Guardar gastos del mes</Button>
+        </div>
+      </form>
+    </Card>
   );
 }
 
@@ -1367,12 +1453,64 @@ function ExpenseStat({ title, subtitle, amount, plain }: { title: string; subtit
   );
 }
 
+function MonthlyProfitPanel({ stats }: { stats?: MonthlyProfitStats }) {
+  const months = stats?.months ?? [];
+  return (
+    <Card className="p-5">
+      <div className="mb-4">
+        <h3 className="font-bold">Rentabilidad por mes</h3>
+        <p className="text-sm text-slate-500">Ingresos reales menos gastos registrados por mes.</p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+        {months.map((item) => (
+          <div key={item.month} className={`rounded-md border p-3 ${monthlyProfitTone(item.net_profit)}`}>
+            <p className="text-xs font-semibold uppercase">{shortMonthLabel(item.month)}</p>
+            <p className="mt-2 text-lg font-bold">{formatCurrency(item.net_profit)}</p>
+            <p className="mt-1 text-xs">Ing. {formatCurrency(item.income_total)}</p>
+            <p className="text-xs">Gas. {formatCurrency(item.expense_total)}</p>
+          </div>
+        ))}
+        {months.length === 0 && <p className="text-sm text-slate-500">Todavia no hay datos mensuales.</p>}
+      </div>
+    </Card>
+  );
+}
+
 function formatPercent(value: number | null) {
   return value === null ? "-" : `${value.toFixed(2)}%`;
 }
 
 function formatNumber(value: number | null) {
   return value === null ? "-" : value.toFixed(2);
+}
+
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMonthLabel(month: string) {
+  return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(new Date(`${month}-01T12:00:00`));
+}
+
+function shortMonthLabel(month: string) {
+  return new Intl.DateTimeFormat("es-ES", { month: "short" }).format(new Date(`${month}-01T12:00:00`));
+}
+
+function monthlyProfitTone(value: number) {
+  if (value < 0) return "border-red-200 bg-red-50 text-red-700";
+  if (value < 500) return "border-yellow-200 bg-yellow-50 text-yellow-800";
+  return "border-emerald-200 bg-emerald-50 text-emerald-700";
+}
+
+function monthlyExpenseDefaults(): MonthlyExpenseState["items"] {
+  return [
+    { category: "electricity", label: "Luz", amount: 0 },
+    { category: "water", label: "Agua", amount: 0 },
+    { category: "internet", label: "Internet", amount: 0 },
+    { category: "cleaning", label: "Limpieza", amount: 0 },
+    { category: "repairs", label: "Reparaciones", amount: 0 }
+  ];
 }
 
 function Row({ title, subtitle, amount }: { title: string; subtitle: string; amount: number | null | undefined }) {

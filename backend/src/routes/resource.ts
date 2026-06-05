@@ -4,6 +4,7 @@ import { crudController } from "../controllers/crudController.js";
 import { requireRole } from "../middleware/requireRole.js";
 import type { AuthedRequest } from "../types.js";
 import * as crud from "../services/crudService.js";
+import * as monthlyExpenses from "../services/monthlyExpenseService.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -15,6 +16,15 @@ export function resourceRouter(table: "properties" | "expenses" | "income" | "do
   if (table === "properties") {
     router.get("/:id/expenses", async (req: AuthedRequest, res) => {
       res.json({ data: await crud.listByProperty("expenses", req.schemaName!, String(req.params.id)) });
+    });
+    router.get("/:id/expenses/monthly", async (req: AuthedRequest, res) => {
+      res.json({ data: await monthlyExpenses.getMonthlyExpenses(req.schemaName!, String(req.params.id), req.query.month) });
+    });
+    router.put("/:id/expenses/monthly", requireRole("admin"), async (req: AuthedRequest, res) => {
+      res.json({ data: await monthlyExpenses.saveMonthlyExpenses(req.schemaName!, String(req.params.id), req.body ?? {}) });
+    });
+    router.get("/:id/stats/monthly", async (req: AuthedRequest, res) => {
+      res.json({ data: await monthlyExpenses.getMonthlyStats(req.schemaName!, String(req.params.id), req.query.year) });
     });
     router.post("/:id/expenses", requireRole("admin"), async (req: AuthedRequest, res) => {
       res.status(201).json({ data: await crud.createByProperty("expenses", req.schemaName!, String(req.params.id), req.body) });
