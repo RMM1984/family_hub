@@ -721,7 +721,7 @@ function ReservationCard({
     <Card className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="font-bold">{reservation.guest_name ?? reservation.title ?? "Reserva Airbnb"}</p>
+          <p className="font-bold">{reservation.title ?? (reservation.guest_name ? `Airbnb - ${reservation.guest_name}` : "Reserva Airbnb")}</p>
           <p className="text-sm text-slate-500">Check-in: {formatDate(reservation.check_in)} · Check-out: {formatDate(reservation.check_out)} · {reservation.nights ?? "-"} noches</p>
           <p className="mt-1 text-sm text-slate-500">Huespedes: {reservation.guest_count ?? "Sin indicar"} · Estado: {labelReservationStatus(reservation.status)}</p>
           <p className="mt-1 text-sm text-slate-500">Ingreso: {hasIncome ? "Ingreso creado" : "sin crear"} · Importe: {amountPending ? "Pendiente de importe" : `${formatCurrency(reservation.income_amount)} · ${labelAmountStatus(reservation.income_amount_status)}`}</p>
@@ -1273,7 +1273,7 @@ function IncomeRow({ item }: { item: Income }) {
   return (
     <div className="flex items-center justify-between gap-4 border-b border-slate-200 p-4 last:border-b-0">
       <div className="min-w-0">
-        <p className="font-semibold">{item.source === "airbnb" ? "Airbnb" : item.guest_name ?? item.description ?? "Ingreso"}</p>
+        <p className="font-semibold">{item.source === "airbnb" ? item.description ?? (item.guest_name ? `Airbnb - ${item.guest_name}` : "Airbnb") : item.guest_name ?? item.description ?? "Ingreso"}</p>
         <p className="truncate text-sm text-slate-500">
           {item.guest_name ?? "Huesped sin indicar"} · {formatDate(item.check_in)} - {formatDate(item.check_out)} · {item.nights ?? "-"} noches
         </p>

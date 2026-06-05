@@ -211,6 +211,18 @@ export async function applyImport(schemaName: string, propertyId: string, import
     const income = await createIncomeFromReservation(schemaName, propertyId, row.reservation_id, {});
     const current = await query("select * from income where property_id = $1 and id = $2", [propertyId, income.id], schemaName);
     const currentIncome = current.rows[0] as any;
+    const guestName = cleanText(row.suggested_guest_name);
+    const guestCount = guestCountFromRaw(row.raw_data);
+    await query(
+      `update property_reservations
+       set guest_name = coalesce($1, guest_name),
+           title = coalesce($2, title),
+           guest_count = coalesce($3, guest_count),
+           guest_count_status = case when $3::int is null then guest_count_status else 'imported' end
+       where property_id = $4 and id = $5`,
+      [guestName, guestName ? `Airbnb - ${guestName}` : null, guestCount, propertyId, row.reservation_id],
+      schemaName
+    );
     const hasProtectedAmount = ["manual", "confirmed"].includes(String(currentIncome?.amount_status ?? "")) && currentIncome.amount !== null && currentIncome.amount !== undefined;
     if (hasProtectedAmount && !confirmOverwrite) {
       skipped += 1;
@@ -226,12 +238,16 @@ export async function applyImport(schemaName: string, propertyId: string, import
            data_origin = 'airbnb_csv',
            imported_from_airbnb = true,
            reservation_id = $2,
-           metadata = coalesce(metadata, '{}'::jsonb) || $3::jsonb
-       where property_id = $4 and id = $5
+           guest_name = coalesce($3, guest_name),
+           description = coalesce($4, description),
+           metadata = coalesce(metadata, '{}'::jsonb) || $5::jsonb
+       where property_id = $6 and id = $7
        returning *`,
       [
         amount,
         row.reservation_id,
+        guestName,
+        guestName ? `Airbnb - ${guestName}` : null,
         JSON.stringify({
           airbnb_csv_import_id: importId,
           airbnb_csv_row_id: row.id,
@@ -239,7 +255,8 @@ export async function applyImport(schemaName: string, propertyId: string, import
           cleaning_fee: row.suggested_cleaning_fee,
           taxes: row.suggested_taxes,
           payout: row.suggested_payout,
-          currency: row.suggested_currency ?? "EUR"
+          currency: row.suggested_currency ?? "EUR",
+          guests: guestCount
         }),
         propertyId,
         income.id
@@ -416,6 +433,17 @@ function normalizeHeader(value: string) {
 function cleanText(value: string | null) {
   const text = String(value ?? "").trim();
   return text.length ? text : null;
+}
+
+function guestCountFromRaw(raw: unknown) {
+  const data = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const count = parseInteger(data.ndeadultos) + parseInteger(data.ndeninos) + parseInteger(data.ndebebes);
+  return count > 0 ? count : null;
+}
+
+function parseInteger(value: unknown) {
+  const parsed = Number(String(value ?? "0").replace(",", "."));
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
 function parseCsvDate(value: string | null) {
