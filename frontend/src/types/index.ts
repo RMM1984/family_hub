@@ -4,6 +4,11 @@ export interface Property {
   address: string;
   city: string;
   type: string;
+  operation_type?: "tourist" | "long_term" | "own_use" | "mixed" | "inactive";
+  rental_type?: "tourist" | "long_term" | "own_use" | "mixed" | "inactive";
+  airbnb_enabled?: boolean;
+  airbnb_ical_url?: string | null;
+  airbnb_last_sync_at?: string | null;
   initial_investment: number;
   reform_cost: number;
   cover_image_url?: string;
@@ -43,8 +48,29 @@ export interface Income {
   check_in?: string;
   check_out?: string;
   nights?: number;
+  reservation_id?: string | null;
+  imported_from_airbnb?: boolean;
+  amount_status?: "missing" | "manual" | "estimated" | "confirmed";
   property_alias?: string;
   property_address?: string;
+}
+
+export interface Reservation {
+  id: string;
+  property_id: string;
+  source: "airbnb";
+  external_id?: string;
+  title?: string;
+  guest_name?: string | null;
+  check_in: string;
+  check_out: string;
+  nights?: number;
+  status: string;
+  imported_from_ical: boolean;
+  synced_at?: string;
+  income_id?: string | null;
+  income_amount?: number | null;
+  income_amount_status?: "missing" | "manual" | "estimated" | "confirmed" | null;
 }
 
 export interface DocumentItem {

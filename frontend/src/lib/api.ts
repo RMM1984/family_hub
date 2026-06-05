@@ -39,6 +39,12 @@ export const getPropertyDocuments = (id: string) => withFallback(() => api.get(`
 export const createPropertyExpense = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/expenses`, data).then((r) => r.data.data);
 export const createPropertyIncome = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/income`, data).then((r) => r.data.data);
 export const createPropertyDocument = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/documents`, data).then((r) => r.data.data);
+export const updatePropertyOperation = (id: string, data: Record<string, unknown>) => api.patch(`/properties/${id}/operation`, data).then((r) => r.data.data);
+export const getPropertyReservations = (id: string) => withFallback(() => api.get(`/properties/${id}/reservations`).then((r) => r.data.data), []);
+export const savePropertyAirbnbIcal = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/airbnb/ical`, data).then((r) => r.data.data);
+export const syncPropertyAirbnb = (id: string) => api.post(`/properties/${id}/airbnb/sync`).then((r) => r.data.data);
+export const createReservationIncome = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/reservations/${reservationId}/create-income`, data).then((r) => r.data.data);
+export const updatePropertyReservation = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/reservations/${reservationId}`, data).then((r) => r.data.data);
 export const getPropertyDrive = (id: string) => withFallback(() => api.get(`/properties/${id}/drive`).then((r) => r.data.data), mockDriveState);
 export const getPropertyDriveAuthUrl = (id: string) => api.get(`/properties/${id}/drive/auth-url`).then((r) => r.data.data as { url: string; scope: string });
 export const getAvailableDriveFolders = (id: string) => api.get(`/properties/${id}/drive/available-folders`).then((r) => r.data.data);

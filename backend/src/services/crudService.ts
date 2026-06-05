@@ -8,7 +8,7 @@ function assertTable(table: string) {
 }
 
 function allowedFiltersFor(table: string) {
-  if (table === "properties") return new Set(["type"]);
+  if (table === "properties") return new Set(["type", "operation_type", "rental_type", "airbnb_enabled"]);
   if (table === "expenses") return new Set(["property_id", "category"]);
   if (table === "income") return new Set(["property_id", "source"]);
   if (table === "documents") return new Set(["property_id", "type"]);

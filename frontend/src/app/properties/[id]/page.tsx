@@ -12,6 +12,7 @@ import {
   createPropertyDocument,
   createPropertyExpense,
   createPropertyIncome,
+  createReservationIncome,
   deleteDriveFolder,
   getAvailableDriveFolders,
   getProperty,
@@ -20,28 +21,33 @@ import {
   getPropertyDriveAuthUrl,
   getPropertyExpenses,
   getPropertyIncome,
+  getPropertyReservations,
   linkDriveFileDocument,
   linkDriveFileExpense,
+  savePropertyAirbnbIcal,
   syncAllPropertyDrive,
+  syncPropertyAirbnb,
   syncDriveFolder,
   syncPropertyDrive,
   updateDriveFile,
-  updateDriveFolder
+  updateDriveFolder,
+  updatePropertyOperation,
+  updatePropertyReservation
 } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/format";
-import type { AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property } from "@/types";
+import type { AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property, Reservation } from "@/types";
 
-const tabs = ["Resumen", "Ingresos", "Gastos", "Documentos", "Drive", "Estadisticas"] as const;
-type Tab = (typeof tabs)[number];
+type Tab = "Resumen" | "Reservas" | "Contrato / Renta" | "Ingresos" | "Gastos" | "Documentos / Drive" | "Estadisticas";
 
 export default function PropertyDetailPage() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const propertyId = params.id;
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "Drive" ? "Drive" : "Resumen");
+  const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "Drive" ? "Documentos / Drive" : "Resumen");
   const { data: property } = useQuery<Property>({ queryKey: ["property", propertyId], queryFn: () => getProperty(propertyId) });
   const { data: income = [] } = useQuery<Income[]>({ queryKey: ["property-income", propertyId], queryFn: () => getPropertyIncome(propertyId) });
+  const { data: reservations = [] } = useQuery<Reservation[]>({ queryKey: ["property-reservations", propertyId], queryFn: () => getPropertyReservations(propertyId) });
   const { data: expenses = [] } = useQuery<Expense[]>({ queryKey: ["property-expenses", propertyId], queryFn: () => getPropertyExpenses(propertyId) });
   const { data: documents = [] } = useQuery<DocumentItem[]>({ queryKey: ["property-documents", propertyId], queryFn: () => getPropertyDocuments(propertyId) });
   const { data: drive } = useQuery<DriveState>({ queryKey: ["property-drive", propertyId], queryFn: () => getPropertyDrive(propertyId) });
@@ -55,8 +61,15 @@ export default function PropertyDetailPage() {
     const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
     return { totalIncome, totalExpenses, profit: totalIncome - totalExpenses };
   }, [income, expenses]);
+  const operationType = property?.operation_type ?? property?.rental_type ?? (property?.type === "airbnb" ? "tourist" : property?.type ?? "mixed");
+  const showAirbnb = operationType === "tourist" || operationType === "mixed" || Boolean(property?.airbnb_enabled);
+  const tabs: Tab[] = showAirbnb
+    ? ["Resumen", "Reservas", "Ingresos", "Gastos", "Documentos / Drive", "Estadisticas"]
+    : ["Resumen", "Contrato / Renta", "Ingresos", "Gastos", "Documentos / Drive", "Estadisticas"];
   const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["property", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-income", propertyId] });
+    queryClient.invalidateQueries({ queryKey: ["property-reservations", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-expenses", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-documents", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["properties"] });
@@ -64,6 +77,11 @@ export default function PropertyDetailPage() {
   };
   const expenseMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyExpense(propertyId, data), onSuccess: refresh });
   const incomeMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyIncome(propertyId, data), onSuccess: refresh });
+  const propertyOperationMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => updatePropertyOperation(propertyId, data), onSuccess: refresh });
+  const airbnbIcalMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => savePropertyAirbnbIcal(propertyId, data), onSuccess: refresh });
+  const airbnbSyncMutation = useMutation({ mutationFn: () => syncPropertyAirbnb(propertyId), onSuccess: refresh });
+  const reservationIncomeMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => createReservationIncome(propertyId, reservationId, data), onSuccess: refresh });
+  const reservationUpdateMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updatePropertyReservation(propertyId, reservationId, data), onSuccess: refresh });
   const documentMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyDocument(propertyId, data), onSuccess: refresh });
   const refreshDrive = () => queryClient.invalidateQueries({ queryKey: ["property-drive", propertyId] });
   const driveAuthorizeMutation = useMutation({
@@ -91,7 +109,9 @@ export default function PropertyDetailPage() {
           <Link href="/properties" className="text-sm font-semibold text-meadow">Volver a viviendas</Link>
           <h2 className="mt-1 text-2xl font-bold">{property.alias}</h2>
           <p className="text-sm text-slate-500">{property.address}</p>
+          <p className="mt-2 inline-flex rounded-md bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-600">{labelOperationType(operationType)}</p>
         </div>
+        <OperationTypeControl value={operationType} airbnbEnabled={Boolean(property.airbnb_enabled)} pending={propertyOperationMutation.isPending} onChange={(data) => propertyOperationMutation.mutate(data)} />
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -117,6 +137,27 @@ export default function PropertyDetailPage() {
         </section>
       )}
 
+      {tab === "Reservas" && showAirbnb && (
+        <ReservationsPanel
+          property={property}
+          reservations={reservations}
+          pendingSave={airbnbIcalMutation.isPending}
+          pendingSync={airbnbSyncMutation.isPending}
+          pendingIncome={reservationIncomeMutation.isPending}
+          onSaveIcal={(data) => airbnbIcalMutation.mutate(data)}
+          onSync={() => airbnbSyncMutation.mutate()}
+          onCreateIncome={(reservationId, data) => reservationIncomeMutation.mutate({ reservationId, data })}
+          onUpdateReservation={(reservationId, data) => reservationUpdateMutation.mutate({ reservationId, data })}
+        />
+      )}
+
+      {tab === "Contrato / Renta" && !showAirbnb && (
+        <Card className="p-5">
+          <h3 className="font-bold">Contrato / Renta</h3>
+          <p className="mt-2 text-sm text-slate-500">Vivienda de larga estancia. Gestiona ingresos, gastos y documentos desde las pestañas de esta vivienda.</p>
+        </Card>
+      )}
+
       {tab === "Ingresos" && (
         <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
           <IncomeForm pending={incomeMutation.isPending} onSubmit={(data) => incomeMutation.mutate(data)} />
@@ -139,48 +180,49 @@ export default function PropertyDetailPage() {
         </section>
       )}
 
-      {tab === "Documentos" && (
-        <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
-          <DocumentForm pending={documentMutation.isPending} onSubmit={(data) => documentMutation.mutate(data)} />
-          <div className="grid gap-3">
-            {documents.map((item) => (
-              <Card key={item.id} className="p-4">
-                <div className="flex items-start gap-3">
-                  <div className="grid h-10 w-10 place-items-center rounded-md bg-slate-100"><FileText className="h-5 w-5" /></div>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-bold">{item.title}</p>
-                    <p className="text-sm text-slate-500">{item.provider ?? item.type} Â· caduca {formatDate(item.expiration_date)}</p>
+      {tab === "Documentos / Drive" && (
+        <section className="space-y-5">
+          <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
+            <DocumentForm pending={documentMutation.isPending} onSubmit={(data) => documentMutation.mutate(data)} />
+            <div className="grid gap-3">
+              {documents.map((item) => (
+                <Card key={item.id} className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="grid h-10 w-10 place-items-center rounded-md bg-slate-100"><FileText className="h-5 w-5" /></div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold">{item.title}</p>
+                      <p className="text-sm text-slate-500">{item.provider ?? item.type} · caduca {formatDate(item.expiration_date)}</p>
+                    </div>
+                    <p className="font-bold">{formatCurrency(item.cost)}</p>
                   </div>
-                  <p className="font-bold">{formatCurrency(item.cost)}</p>
-                </div>
-              </Card>
-            ))}
-          </div>
+                </Card>
+              ))}
+            </div>
+          </section>
+          {drive && (
+            <DrivePanel
+              drive={drive}
+              availableDriveFolders={availableDriveFolders}
+              googleStatus={searchParams.get("google")}
+              expenses={expenses}
+              documents={documents}
+              pendingConnect={driveFolderCreateMutation.isPending}
+              pendingAuthorize={driveAuthorizeMutation.isPending}
+              pendingSync={driveSyncMutation.isPending || driveSyncAllMutation.isPending || driveFolderSyncMutation.isPending}
+              pendingUpdate={driveUpdateMutation.isPending || driveLinkExpenseMutation.isPending || driveLinkDocumentMutation.isPending}
+              onAuthorize={() => driveAuthorizeMutation.mutate()}
+              onCreateFolder={(data) => driveFolderCreateMutation.mutate(data)}
+              onUpdateFolder={(folderId, data) => driveFolderUpdateMutation.mutate({ folderId, data })}
+              onDeleteFolder={(folderId) => driveFolderDeleteMutation.mutate(folderId)}
+              onSyncFolder={(folderId) => driveFolderSyncMutation.mutate(folderId)}
+              onSyncAll={() => driveSyncAllMutation.mutate()}
+              onSync={() => driveSyncMutation.mutate()}
+              onUpdate={(fileId, data) => driveUpdateMutation.mutate({ fileId, data })}
+              onLinkExpense={(fileId, expenseId) => driveLinkExpenseMutation.mutate({ fileId, expenseId })}
+              onLinkDocument={(fileId, documentId) => driveLinkDocumentMutation.mutate({ fileId, documentId })}
+            />
+          )}
         </section>
-      )}
-
-      {tab === "Drive" && drive && (
-        <DrivePanel
-          drive={drive}
-          availableDriveFolders={availableDriveFolders}
-          googleStatus={searchParams.get("google")}
-          expenses={expenses}
-          documents={documents}
-          pendingConnect={driveFolderCreateMutation.isPending}
-          pendingAuthorize={driveAuthorizeMutation.isPending}
-          pendingSync={driveSyncMutation.isPending || driveSyncAllMutation.isPending || driveFolderSyncMutation.isPending}
-          pendingUpdate={driveUpdateMutation.isPending || driveLinkExpenseMutation.isPending || driveLinkDocumentMutation.isPending}
-          onAuthorize={() => driveAuthorizeMutation.mutate()}
-          onCreateFolder={(data) => driveFolderCreateMutation.mutate(data)}
-          onUpdateFolder={(folderId, data) => driveFolderUpdateMutation.mutate({ folderId, data })}
-          onDeleteFolder={(folderId) => driveFolderDeleteMutation.mutate(folderId)}
-          onSyncFolder={(folderId) => driveFolderSyncMutation.mutate(folderId)}
-          onSyncAll={() => driveSyncAllMutation.mutate()}
-          onSync={() => driveSyncMutation.mutate()}
-          onUpdate={(fileId, data) => driveUpdateMutation.mutate({ fileId, data })}
-          onLinkExpense={(fileId, expenseId) => driveLinkExpenseMutation.mutate({ fileId, expenseId })}
-          onLinkDocument={(fileId, documentId) => driveLinkDocumentMutation.mutate({ fileId, documentId })}
-        />
       )}
 
       {tab === "Estadisticas" && (
@@ -308,6 +350,123 @@ function DrivePanel({
         {filtered.length === 0 && <Card className="p-5 text-sm text-slate-500">No hay archivos para este filtro.</Card>}
       </div>
     </section>
+  );
+}
+
+function OperationTypeControl({ value, airbnbEnabled, pending, onChange }: { value: string; airbnbEnabled: boolean; pending: boolean; onChange: (data: Record<string, unknown>) => void }) {
+  const [operationType, setOperationType] = useState(value);
+  const [enabled, setEnabled] = useState(airbnbEnabled);
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Tipo de operacion</span>
+        <select value={operationType} onChange={(event) => setOperationType(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
+          {["tourist", "long_term", "own_use", "mixed", "inactive"].map((item) => <option key={item} value={item}>{labelOperationType(item)}</option>)}
+        </select>
+      </label>
+      <label className="flex h-10 items-center gap-2 rounded-md border border-slate-300 px-3 text-sm">
+        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+        Airbnb
+      </label>
+      <Button disabled={pending} onClick={() => onChange({ operation_type: operationType, airbnb_enabled: enabled })} className="bg-ink">Guardar</Button>
+    </div>
+  );
+}
+
+function ReservationsPanel({
+  property,
+  reservations,
+  pendingSave,
+  pendingSync,
+  pendingIncome,
+  onSaveIcal,
+  onSync,
+  onCreateIncome,
+  onUpdateReservation
+}: {
+  property: Property;
+  reservations: Reservation[];
+  pendingSave: boolean;
+  pendingSync: boolean;
+  pendingIncome: boolean;
+  onSaveIcal: (data: Record<string, unknown>) => void;
+  onSync: () => void;
+  onCreateIncome: (reservationId: string, data: Record<string, unknown>) => void;
+  onUpdateReservation: (reservationId: string, data: Record<string, unknown>) => void;
+}) {
+  function submitIcal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    onSaveIcal({ airbnb_ical_url: String(form.get("airbnb_ical_url") ?? "") });
+  }
+  const upcoming = reservations.filter((reservation) => new Date(reservation.check_out) >= new Date()).slice(0, 3);
+  return (
+    <section className="space-y-5">
+      <Card className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold">Reservas Airbnb</h3>
+            <p className="text-sm text-slate-500">{property.airbnb_enabled ? "Airbnb conectado para esta vivienda" : "Airbnb no conectado en esta vivienda"}</p>
+            <p className="mt-1 text-xs text-slate-500">Ultima sincronizacion: {formatDate(property.airbnb_last_sync_at)}</p>
+          </div>
+          <Button disabled={!property.airbnb_ical_url || pendingSync} onClick={onSync} className="bg-meadow hover:bg-green-700">Sincronizar reservas</Button>
+        </div>
+        <form onSubmit={submitIcal} className="mt-5 grid gap-3 lg:grid-cols-[1fr_160px]">
+          <input name="airbnb_ical_url" defaultValue={property.airbnb_ical_url ?? ""} required placeholder="URL iCal de Airbnb" className="h-10 rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
+          <Button disabled={pendingSave} className="bg-ink">Guardar URL</Button>
+        </form>
+      </Card>
+
+      {upcoming.length > 0 && (
+        <section className="grid gap-3 md:grid-cols-3">
+          {upcoming.map((reservation) => (
+            <Card key={reservation.id} className="p-4">
+              <p className="font-bold">{reservation.guest_name ?? reservation.title ?? "Reserva"}</p>
+              <p className="mt-1 text-sm text-slate-500">{formatDate(reservation.check_in)} - {formatDate(reservation.check_out)}</p>
+              <p className="mt-2 text-sm font-semibold text-meadow">{reservation.nights ?? "-"} noches</p>
+            </Card>
+          ))}
+        </section>
+      )}
+
+      <div className="grid gap-3">
+        {reservations.map((reservation) => (
+          <ReservationCard
+            key={reservation.id}
+            reservation={reservation}
+            pending={pendingIncome}
+            onCreateIncome={onCreateIncome}
+            onUpdateReservation={onUpdateReservation}
+          />
+        ))}
+        {reservations.length === 0 && <Card className="p-5 text-sm text-slate-500">Todavia no hay reservas sincronizadas para esta vivienda.</Card>}
+      </div>
+    </section>
+  );
+}
+
+function ReservationCard({ reservation, pending, onCreateIncome, onUpdateReservation }: { reservation: Reservation; pending: boolean; onCreateIncome: (reservationId: string, data: Record<string, unknown>) => void; onUpdateReservation: (reservationId: string, data: Record<string, unknown>) => void }) {
+  const [amount, setAmount] = useState(reservation.income_amount?.toString() ?? "");
+  const hasIncome = Boolean(reservation.income_id);
+  const amountPending = !hasIncome || reservation.income_amount_status === "missing" || reservation.income_amount === null || reservation.income_amount === undefined;
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-bold">{reservation.guest_name ?? reservation.title ?? "Reserva Airbnb"}</p>
+          <p className="text-sm text-slate-500">Check-in: {formatDate(reservation.check_in)} · Check-out: {formatDate(reservation.check_out)} · {reservation.nights ?? "-"} noches</p>
+          <p className="mt-1 text-sm text-slate-500">Estado: {labelReservationStatus(reservation.status)} · Ingreso: {hasIncome ? "creado" : "sin crear"} · Importe: {amountPending ? "pendiente" : formatCurrency(reservation.income_amount)}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={pending} onClick={() => onCreateIncome(reservation.id, {})} className="bg-ink">{hasIncome ? "Actualizar ingreso" : "Crear ingreso"}</Button>
+          <Button disabled={pending} onClick={() => onUpdateReservation(reservation.id, { status: "cancelled" })} className="bg-white text-coral hover:bg-slate-50">Cancelar</Button>
+        </div>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_180px]">
+        <input value={amount} onChange={(event) => setAmount(event.target.value)} type="number" step="0.01" placeholder="Importe manual" className="h-10 rounded-md border border-slate-300 px-3" />
+        <Button disabled={pending || !amount} onClick={() => onCreateIncome(reservation.id, { amount, amount_status: "manual" })} className="bg-meadow hover:bg-green-700">Completar importe</Button>
+      </div>
+    </Card>
   );
 }
 
@@ -538,6 +697,27 @@ function labelDriveFilter(value: string) {
   return labels[value] ?? value;
 }
 
+function labelOperationType(value?: string | null) {
+  const labels: Record<string, string> = {
+    tourist: "Turistica",
+    long_term: "Larga estancia",
+    own_use: "Uso propio",
+    mixed: "Mixta",
+    inactive: "Inactiva",
+    airbnb: "Turistica"
+  };
+  return labels[String(value ?? "mixed")] ?? "Mixta";
+}
+
+function labelReservationStatus(value?: string | null) {
+  const labels: Record<string, string> = {
+    confirmed: "Confirmada",
+    cancelled: "Cancelada",
+    blocked: "Bloqueada"
+  };
+  return labels[String(value ?? "confirmed")] ?? "Confirmada";
+}
+
 function Metric({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {
   return (
     <Card className="p-5">
@@ -599,6 +779,3 @@ function SimpleForm({ title, fields, labels, defaults, pending, onSubmit }: { ti
     </Card>
   );
 }
-
-
-
