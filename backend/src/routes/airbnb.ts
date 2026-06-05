@@ -22,6 +22,10 @@ airbnbRouter.post("/airbnb/sync", requireRole("admin"), async (req: AuthedReques
   res.json({ data: await airbnb.syncAirbnb(req.schemaName!, String(req.params.propertyId)) });
 });
 
+airbnbRouter.delete("/airbnb/ical", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await airbnb.disconnectAirbnb(req.schemaName!, String(req.params.propertyId)) });
+});
+
 airbnbRouter.get("/airbnb/stats", async (req: AuthedRequest, res: Response) => {
   res.json({ data: await airbnb.getStats(req.schemaName!, String(req.params.propertyId)) });
 });
@@ -32,6 +36,14 @@ airbnbRouter.patch("/reservations/:reservationId", requireRole("admin"), async (
 
 airbnbRouter.post("/reservations/:reservationId/create-income", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
   res.status(201).json({ data: await airbnb.createIncomeFromReservation(req.schemaName!, String(req.params.propertyId), String(req.params.reservationId), req.body) });
+});
+
+airbnbRouter.patch("/reservations/:reservationId/amount", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await airbnb.updateReservationAmount(req.schemaName!, String(req.params.propertyId), String(req.params.reservationId), req.body) });
+});
+
+airbnbRouter.patch("/reservations/:reservationId/guest-count", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await airbnb.updateGuestCount(req.schemaName!, String(req.params.propertyId), String(req.params.reservationId), req.body) });
 });
 
 airbnbRouter.patch("/operation", requireRole("admin"), async (req: AuthedRequest, res: Response) => {

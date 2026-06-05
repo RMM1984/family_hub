@@ -14,6 +14,7 @@ import {
   createPropertyIncome,
   createReservationIncome,
   deleteDriveFolder,
+  disconnectPropertyAirbnb,
   disconnectPropertyDrive,
   getAvailableDriveFolders,
   getPropertyAirbnbStats,
@@ -36,7 +37,9 @@ import {
   updateDriveFile,
   updateDriveFolder,
   updatePropertyOperation,
-  updatePropertyReservation
+  updatePropertyReservation,
+  updateReservationAmount,
+  updateReservationGuestCount
 } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property, Reservation } from "@/types";
@@ -48,7 +51,10 @@ export default function PropertyDetailPage() {
   const searchParams = useSearchParams();
   const propertyId = params.id;
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "Drive" ? "Documentos / Drive" : "Resumen");
+  const requestedTab = searchParams.get("tab");
+  const [tab, setTab] = useState<Tab>(requestedTab === "Drive" ? "Documentos / Drive" : requestedTab === "Reservas" ? "Reservas" : "Resumen");
+  const [showDemoData, setShowDemoData] = useState(false);
+  const [incomeFilter, setIncomeFilter] = useState("todos");
   const { data: property } = useQuery<Property>({ queryKey: ["property", propertyId], queryFn: () => getProperty(propertyId) });
   const operationType = property?.operation_type ?? property?.rental_type ?? (property?.type === "airbnb" ? "tourist" : property?.type ?? "mixed");
   const showAirbnb = operationType === "tourist" || operationType === "mixed" || Boolean(property?.airbnb_enabled);
@@ -70,7 +76,8 @@ export default function PropertyDetailPage() {
     retry: false
   });
   const totals = useMemo(() => {
-    const totalIncome = income.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+    const realIncome = income.filter((item) => !item.is_demo);
+    const totalIncome = realIncome.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
     const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
     return { totalIncome, totalExpenses, profit: totalIncome - totalExpenses };
   }, [income, expenses]);
@@ -92,7 +99,10 @@ export default function PropertyDetailPage() {
   const propertyOperationMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => updatePropertyOperation(propertyId, data), onSuccess: refresh });
   const airbnbIcalMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => savePropertyAirbnbIcal(propertyId, data), onSuccess: refresh });
   const airbnbSyncMutation = useMutation({ mutationFn: () => syncPropertyAirbnb(propertyId), onSuccess: refresh });
+  const airbnbDisconnectMutation = useMutation({ mutationFn: () => disconnectPropertyAirbnb(propertyId), onSuccess: refresh });
   const reservationIncomeMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => createReservationIncome(propertyId, reservationId, data), onSuccess: refresh });
+  const reservationAmountMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updateReservationAmount(propertyId, reservationId, data), onSuccess: refresh });
+  const reservationGuestCountMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updateReservationGuestCount(propertyId, reservationId, data), onSuccess: refresh });
   const reservationUpdateMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updatePropertyReservation(propertyId, reservationId, data), onSuccess: refresh });
   const documentMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyDocument(propertyId, data), onSuccess: refresh });
   const refreshDrive = () => queryClient.invalidateQueries({ queryKey: ["property-drive", propertyId] });
@@ -122,6 +132,15 @@ export default function PropertyDetailPage() {
   });
 
   if (!property) return null;
+  const visibleIncome = income
+    .filter((item) => showDemoData || !item.is_demo)
+    .filter((item) => {
+      if (incomeFilter === "manuales") return item.source !== "airbnb";
+      if (incomeFilter === "airbnb") return item.source === "airbnb";
+      if (incomeFilter === "pending") return item.amount_status === "missing" || item.amount === null || item.amount === undefined;
+      if (incomeFilter === "completed") return item.amount_status !== "missing" && item.amount !== null && item.amount !== undefined;
+      return true;
+    });
 
   return (
     <div className="space-y-5">
@@ -148,13 +167,6 @@ export default function PropertyDetailPage() {
           <Metric title="Ingresos" value={formatCurrency(totals.totalIncome)} icon={<Wallet className="h-5 w-5" />} />
           <Metric title="Gastos" value={formatCurrency(totals.totalExpenses)} icon={<Receipt className="h-5 w-5" />} />
           <Metric title="Beneficio" value={formatCurrency(totals.profit)} icon={<CalendarClock className="h-5 w-5" />} />
-          <Card className="p-5 md:col-span-3">
-            <h3 className="font-bold">Proximos hitos</h3>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <p className="rounded-md bg-slate-100 p-3 text-sm">Documento: <b>{documents[0]?.title ?? "Sin documentos"}</b> Â· {formatDate(documents[0]?.expiration_date)}</p>
-              <p className="rounded-md bg-slate-100 p-3 text-sm">Reserva: <b>{income[0]?.guest_name ?? "Sin reservas"}</b> Â· {formatDate(income[0]?.check_in)}</p>
-            </div>
-          </Card>
         </section>
       )}
 
@@ -165,10 +177,13 @@ export default function PropertyDetailPage() {
           stats={airbnbStats}
           pendingSave={airbnbIcalMutation.isPending}
           pendingSync={airbnbSyncMutation.isPending}
-          pendingIncome={reservationIncomeMutation.isPending}
+          pendingIncome={reservationIncomeMutation.isPending || reservationAmountMutation.isPending || reservationGuestCountMutation.isPending}
           onSaveIcal={(data) => airbnbIcalMutation.mutate(data)}
           onSync={() => airbnbSyncMutation.mutate()}
+          onDisconnect={() => airbnbDisconnectMutation.mutate()}
           onCreateIncome={(reservationId, data) => reservationIncomeMutation.mutate({ reservationId, data })}
+          onUpdateAmount={(reservationId, data) => reservationAmountMutation.mutate({ reservationId, data })}
+          onUpdateGuestCount={(reservationId, data) => reservationGuestCountMutation.mutate({ reservationId, data })}
           onUpdateReservation={(reservationId, data) => reservationUpdateMutation.mutate({ reservationId, data })}
         />
       )}
@@ -183,11 +198,31 @@ export default function PropertyDetailPage() {
       {tab === "Ingresos" && (
         <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
           <IncomeForm pending={incomeMutation.isPending} onSubmit={(data) => incomeMutation.mutate(data)} />
-          <Card className="overflow-hidden">
-            {income.map((item) => (
-              <Row key={item.id} title={item.guest_name ?? "Reserva"} subtitle={`${formatDate(item.check_in)} - ${formatDate(item.check_out)} Â· ${item.nights ?? "-"} noches`} amount={item.amount} />
-            ))}
-          </Card>
+          <section className="space-y-3">
+            <Card className="p-4">
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ["todos", "Todos"],
+                  ["manuales", "Manuales"],
+                  ["airbnb", "Airbnb"],
+                  ["pending", "Pendientes de importe"],
+                  ["completed", "Con importe"]
+                ].map(([value, label]) => (
+                  <button key={value} onClick={() => setIncomeFilter(value)} className={`rounded-md px-3 py-2 text-sm font-semibold ${incomeFilter === value ? "bg-ink text-white" : "bg-slate-100 text-slate-600"}`}>{label}</button>
+                ))}
+                <label className="ml-auto flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" checked={showDemoData} onChange={(event) => setShowDemoData(event.target.checked)} />
+                  Mostrar datos demo
+                </label>
+              </div>
+            </Card>
+            <Card className="overflow-hidden">
+              {visibleIncome.map((item) => (
+                <IncomeRow key={item.id} item={item} />
+              ))}
+              {visibleIncome.length === 0 && <p className="p-4 text-sm text-slate-500">No hay ingresos para este filtro.</p>}
+            </Card>
+          </section>
         </section>
       )}
 
@@ -462,7 +497,10 @@ function ReservationsPanel({
   pendingIncome,
   onSaveIcal,
   onSync,
+  onDisconnect,
   onCreateIncome,
+  onUpdateAmount,
+  onUpdateGuestCount,
   onUpdateReservation
 }: {
   property: Property;
@@ -473,15 +511,29 @@ function ReservationsPanel({
   pendingIncome: boolean;
   onSaveIcal: (data: Record<string, unknown>) => void;
   onSync: () => void;
+  onDisconnect: () => void;
   onCreateIncome: (reservationId: string, data: Record<string, unknown>) => void;
+  onUpdateAmount: (reservationId: string, data: Record<string, unknown>) => void;
+  onUpdateGuestCount: (reservationId: string, data: Record<string, unknown>) => void;
   onUpdateReservation: (reservationId: string, data: Record<string, unknown>) => void;
 }) {
   const [monthCursor, setMonthCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [filter, setFilter] = useState("upcoming");
   function submitIcal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     onSaveIcal({ airbnb_ical_url: String(form.get("airbnb_ical_url") ?? "") });
   }
+  const today = new Date();
+  const filteredReservations = reservations.filter((reservation) => {
+    const checkOut = new Date(reservation.check_out);
+    const amountMissing = reservation.income_amount_status === "missing" || reservation.income_amount === null || reservation.income_amount === undefined;
+    if (filter === "upcoming") return checkOut >= today;
+    if (filter === "past") return checkOut < today;
+    if (filter === "missing") return amountMissing;
+    if (filter === "completed") return !amountMissing;
+    return true;
+  });
   return (
     <section className="space-y-5">
       <Card className="p-5">
@@ -493,9 +545,14 @@ function ReservationsPanel({
             <p className={`mt-3 inline-flex rounded-md px-3 py-1 text-sm font-semibold ${property.airbnb_ical_url ? "bg-emerald-50 text-meadow" : "bg-slate-100 text-slate-600"}`}>
               {property.airbnb_ical_url ? "URL iCal guardada" : "Airbnb no conectado"}
             </p>
+            {property.airbnb_ical_url && <p className="mt-2 text-xs text-slate-500">{maskIcalUrl(property.airbnb_ical_url)}</p>}
             <p className="mt-2 text-xs text-slate-500">Ultima sincronizacion: {formatDate(property.airbnb_last_sync_at)}</p>
+            <p className="mt-1 text-xs text-slate-500">Reservas importadas: {stats?.reservations_total ?? reservations.length}</p>
           </div>
-          <Button disabled={!property.airbnb_ical_url || pendingSync} onClick={onSync} className="bg-meadow hover:bg-green-700">Sincronizar ahora</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={!property.airbnb_ical_url || pendingSync} onClick={onSync} className="bg-meadow hover:bg-green-700">Sincronizar ahora</Button>
+            {property.airbnb_ical_url && <Button disabled={pendingSync} onClick={onDisconnect} className="bg-white text-coral hover:bg-slate-50">Desconectar Airbnb iCal</Button>}
+          </div>
         </div>
         <form onSubmit={submitIcal} className="mt-5 grid gap-3 lg:grid-cols-[1fr_160px]">
           <input name="airbnb_ical_url" defaultValue={property.airbnb_ical_url ?? ""} required placeholder="URL iCal de Airbnb" className="h-10 rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
@@ -503,33 +560,65 @@ function ReservationsPanel({
         </form>
       </Card>
 
-      <section className="grid gap-3 md:grid-cols-5">
+      <section className="grid gap-3 md:grid-cols-6">
         <Metric title="Proximo check-in" value={formatDate(stats?.next_check_in)} icon={<CalendarClock className="h-5 w-5" />} />
         <Metric title="Proximo check-out" value={formatDate(stats?.next_check_out)} icon={<CalendarClock className="h-5 w-5" />} />
         <Metric title="Noches este mes" value={String(stats?.booked_nights_current_month ?? 0)} icon={<CalendarClock className="h-5 w-5" />} />
         <Metric title="Ocupacion 30 dias" value={`${stats?.occupancy_next_30_days ?? 0}%`} icon={<Wallet className="h-5 w-5" />} />
         <Metric title="Importes pendientes" value={String(stats?.incomes_missing_amount ?? 0)} icon={<Receipt className="h-5 w-5" />} />
+        <Metric title="Huespedes conocidos" value={String(stats?.guests_known ?? 0)} icon={<Plus className="h-5 w-5" />} />
       </section>
 
       <ReservationCalendar reservations={reservations} month={monthCursor} onMonthChange={setMonthCursor} />
 
+      <Card className="p-4">
+        <div className="flex flex-wrap gap-2">
+          {[
+            ["upcoming", "Proximas"],
+            ["past", "Pasadas"],
+            ["all", "Todas"],
+            ["missing", "Pendientes de importe"],
+            ["completed", "Con importe"]
+          ].map(([value, label]) => (
+            <button key={value} onClick={() => setFilter(value)} className={`rounded-md px-3 py-2 text-sm font-semibold ${filter === value ? "bg-ink text-white" : "bg-slate-100 text-slate-600"}`}>{label}</button>
+          ))}
+        </div>
+      </Card>
+
       <div className="grid gap-3">
-        {reservations.map((reservation) => (
+        {filteredReservations.map((reservation) => (
           <ReservationCard
             key={reservation.id}
             reservation={reservation}
             pending={pendingIncome}
             onCreateIncome={onCreateIncome}
+            onUpdateAmount={onUpdateAmount}
+            onUpdateGuestCount={onUpdateGuestCount}
             onUpdateReservation={onUpdateReservation}
           />
         ))}
-        {reservations.length === 0 && <Card className="p-5 text-sm text-slate-500">Todavia no hay reservas sincronizadas para esta vivienda.</Card>}
+        {filteredReservations.length === 0 && <Card className="p-5 text-sm text-slate-500">No hay reservas para este filtro.</Card>}
       </div>
     </section>
   );
 }
-function ReservationCard({ reservation, pending, onCreateIncome, onUpdateReservation }: { reservation: Reservation; pending: boolean; onCreateIncome: (reservationId: string, data: Record<string, unknown>) => void; onUpdateReservation: (reservationId: string, data: Record<string, unknown>) => void }) {
+function ReservationCard({
+  reservation,
+  pending,
+  onCreateIncome,
+  onUpdateAmount,
+  onUpdateGuestCount,
+  onUpdateReservation
+}: {
+  reservation: Reservation;
+  pending: boolean;
+  onCreateIncome: (reservationId: string, data: Record<string, unknown>) => void;
+  onUpdateAmount: (reservationId: string, data: Record<string, unknown>) => void;
+  onUpdateGuestCount: (reservationId: string, data: Record<string, unknown>) => void;
+  onUpdateReservation: (reservationId: string, data: Record<string, unknown>) => void;
+}) {
   const [amount, setAmount] = useState(reservation.income_amount?.toString() ?? "");
+  const [guestCount, setGuestCount] = useState(reservation.guest_count?.toString() ?? "");
   const hasIncome = Boolean(reservation.income_id);
   const amountPending = !hasIncome || reservation.income_amount_status === "missing" || reservation.income_amount === null || reservation.income_amount === undefined;
   return (
@@ -538,7 +627,8 @@ function ReservationCard({ reservation, pending, onCreateIncome, onUpdateReserva
         <div>
           <p className="font-bold">{reservation.guest_name ?? reservation.title ?? "Reserva Airbnb"}</p>
           <p className="text-sm text-slate-500">Check-in: {formatDate(reservation.check_in)} · Check-out: {formatDate(reservation.check_out)} · {reservation.nights ?? "-"} noches</p>
-          <p className="mt-1 text-sm text-slate-500">Estado: {labelReservationStatus(reservation.status)} · Ingreso: {hasIncome ? "Ingreso creado" : "sin crear"} · Importe: {amountPending ? labelAmountStatus(reservation.income_amount_status) : `${formatCurrency(reservation.income_amount)} · ${labelAmountStatus(reservation.income_amount_status)}`}</p>
+          <p className="mt-1 text-sm text-slate-500">Huespedes: {reservation.guest_count ?? "Sin indicar"} · Estado: {labelReservationStatus(reservation.status)}</p>
+          <p className="mt-1 text-sm text-slate-500">Ingreso: {hasIncome ? "Ingreso creado" : "sin crear"} · Importe: {amountPending ? "Pendiente de importe" : `${formatCurrency(reservation.income_amount)} · ${labelAmountStatus(reservation.income_amount_status)}`}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button disabled={pending} onClick={() => onCreateIncome(reservation.id, {})} className="bg-ink">{hasIncome ? "Ingreso creado" : "Crear ingreso"}</Button>
@@ -547,19 +637,25 @@ function ReservationCard({ reservation, pending, onCreateIncome, onUpdateReserva
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-[1fr_180px]">
         <input value={amount} onChange={(event) => setAmount(event.target.value)} type="number" step="0.01" placeholder="Importe manual" className="h-10 rounded-md border border-slate-300 px-3" />
-        <Button disabled={pending || !amount} onClick={() => onCreateIncome(reservation.id, { amount, amount_status: "manual" })} className="bg-meadow hover:bg-green-700">Completar importe</Button>
+        <Button disabled={pending || !amount} onClick={() => onUpdateAmount(reservation.id, { amount })} className="bg-meadow hover:bg-green-700">Completar importe</Button>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_180px]">
+        <input value={guestCount} onChange={(event) => setGuestCount(event.target.value)} type="number" min="1" step="1" placeholder="Numero de huespedes" className="h-10 rounded-md border border-slate-300 px-3" />
+        <Button disabled={pending || !guestCount} onClick={() => onUpdateGuestCount(reservation.id, { guest_count: guestCount })} className="bg-white text-ink hover:bg-slate-50">Editar huespedes</Button>
       </div>
     </Card>
   );
 }
 
 function ReservationCalendar({ reservations, month, onMonthChange }: { reservations: Reservation[]; month: Date; onMonthChange: (date: Date) => void }) {
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
   const startOffset = (firstDay.getDay() + 6) % 7;
   const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
   const cells = Array.from({ length: startOffset + daysInMonth }, (_, index) => index < startOffset ? null : new Date(month.getFullYear(), month.getMonth(), index - startOffset + 1));
   const todayKey = dateKey(new Date());
   const monthLabel = month.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  const selectedReservations = selectedDay ? reservations.filter((reservation) => reservationCoversDate(reservation, selectedDay)) : [];
   return (
     <Card className="p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -580,15 +676,26 @@ function ReservationCalendar({ reservations, month, onMonthChange }: { reservati
           const checkIn = reservations.some((reservation) => dateKey(new Date(reservation.check_in)) === key);
           const checkOut = reservations.some((reservation) => dateKey(new Date(reservation.check_out)) === key);
           return (
-            <div key={key} className={`aspect-square rounded-md border p-2 text-xs ${dayReservations.length ? "border-meadow bg-emerald-50 text-ink" : "border-slate-200 bg-white"} ${key === todayKey ? "ring-2 ring-sun" : ""}`}>
+            <button type="button" key={key} onClick={() => setSelectedDay(day)} className={`aspect-square rounded-md border p-2 text-left text-xs ${dayReservations.length ? "border-meadow bg-emerald-50 text-ink" : "border-slate-200 bg-white"} ${key === todayKey ? "ring-2 ring-sun" : ""}`}>
               <p className="font-bold">{day.getDate()}</p>
               {checkIn && <p className="mt-1 text-[10px] text-meadow">Entrada</p>}
               {checkOut && <p className="text-[10px] text-coral">Salida</p>}
               {dayReservations.length > 0 && !checkIn && !checkOut && <p className="mt-1 text-[10px]">Reservado</p>}
-            </div>
+            </button>
           );
         })}
       </div>
+      {selectedDay && (
+        <div className="mt-4 rounded-md border border-slate-200 p-3">
+          <p className="font-semibold">{formatDate(selectedDay.toISOString())}</p>
+          <div className="mt-2 grid gap-2">
+            {selectedReservations.map((reservation) => (
+              <p key={reservation.id} className="rounded-md bg-slate-100 p-2 text-sm">{reservation.guest_name ?? reservation.title ?? "Reserva"} · {formatDate(reservation.check_in)} - {formatDate(reservation.check_out)}</p>
+            ))}
+            {selectedReservations.length === 0 && <p className="text-sm text-slate-500">Sin reservas este dia.</p>}
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
@@ -989,6 +1096,19 @@ function labelAmountStatus(value?: string | null) {
   return labels[String(value ?? "missing")] ?? "Pendiente importe";
 }
 
+function maskIcalUrl(value?: string | null) {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    const token = url.searchParams.get("t");
+    if (token) url.searchParams.set("t", "****");
+    const path = url.pathname.replace(/\/ical\/[^/]+\.ics/i, "/ical/xxxxx.ics");
+    return `${url.origin}${path}${url.search}`;
+  } catch {
+    return "URL iCal guardada";
+  }
+}
+
 function dateKey(value: Date) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 }
@@ -1019,6 +1139,22 @@ function Row({ title, subtitle, amount }: { title: string; subtitle: string; amo
         <p className="truncate text-sm text-slate-500">{subtitle}</p>
       </div>
       <p className="font-bold">{formatCurrency(amount)}</p>
+    </div>
+  );
+}
+
+function IncomeRow({ item }: { item: Income }) {
+  const pending = item.amount_status === "missing" || item.amount === null || item.amount === undefined;
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-slate-200 p-4 last:border-b-0">
+      <div className="min-w-0">
+        <p className="font-semibold">{item.source === "airbnb" ? "Airbnb" : item.guest_name ?? item.description ?? "Ingreso"}</p>
+        <p className="truncate text-sm text-slate-500">
+          {item.guest_name ?? "Huesped sin indicar"} · {formatDate(item.check_in)} - {formatDate(item.check_out)} · {item.nights ?? "-"} noches
+        </p>
+        {item.is_demo && <p className="mt-1 text-xs font-semibold text-slate-500">Dato demo</p>}
+      </div>
+      <p className={`font-bold ${pending ? "text-sun" : ""}`}>{pending ? "Pendiente de importe" : formatCurrency(item.amount)}</p>
     </div>
   );
 }

@@ -54,7 +54,10 @@ export const getPropertyAirbnbStats = (id: string) => withFallback(() => api.get
 });
 export const savePropertyAirbnbIcal = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/airbnb/ical`, data).then((r) => r.data.data);
 export const syncPropertyAirbnb = (id: string) => api.post(`/properties/${id}/airbnb/sync`).then((r) => r.data.data);
+export const disconnectPropertyAirbnb = (id: string) => api.delete(`/properties/${id}/airbnb/ical`).then((r) => r.data.data);
 export const createReservationIncome = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/reservations/${reservationId}/create-income`, data).then((r) => r.data.data);
+export const updateReservationAmount = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/reservations/${reservationId}/amount`, data).then((r) => r.data.data);
+export const updateReservationGuestCount = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/reservations/${reservationId}/guest-count`, data).then((r) => r.data.data);
 export const updatePropertyReservation = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/reservations/${reservationId}`, data).then((r) => r.data.data);
 export const getPropertyDrive = (id: string) => withFallback(() => api.get(`/properties/${id}/drive`).then((r) => r.data.data), mockDriveState);
 export const getPropertyDriveAuthUrl = (id: string) => api.get(`/properties/${id}/drive/auth-url`).then((r) => r.data.data as { url: string; scope: string });
@@ -72,5 +75,5 @@ export const linkDriveFileDocument = (propertyId: string, fileId: string, docume
 export const registerDriveFileExpense = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/register-expense`, data).then((r) => r.data.data);
 export const saveDriveFileDocument = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/save-document`, data).then((r) => r.data.data);
 export const disconnectPropertyDrive = (propertyId: string) => api.delete(`/properties/${propertyId}/drive/disconnect`).then((r) => r.data.data);
-export const getConnections = () => withFallback(() => api.get("/connections").then((r) => r.data.data), { google_drive: { configured: false, scope: "", connections: [] } });
+export const getConnections = () => withFallback(() => api.get("/connections").then((r) => r.data.data), { google_drive: { configured: false, scope: "", connections: [] }, airbnb_ical: { configured: true, method: "ical_per_property", connections: [] } });
 export const getGoogleDriveFolders = () => withFallback(() => api.get("/connections/google-drive/folders").then((r) => r.data.data), []);

@@ -407,6 +407,33 @@ export async function saveDocumentFromFile(schemaName: string, propertyId: strin
     throw err;
   }
   const rawType = String(input.type ?? "otro").trim();
+  const existing = await query("select id from documents where property_id = $1 and drive_file_id = $2", [propertyId, file.id], schemaName);
+  if (existing.rows[0]) {
+    const updated = await query(
+      `update documents
+       set type = $1,
+           subtype = $2,
+           title = $3,
+           expiration_date = $4,
+           file_url = $5,
+           notes = $6
+       where property_id = $7 and id = $8
+       returning *`,
+      [
+        normalizeDocumentRecordType(rawType),
+        rawType,
+        title,
+        input.expiration_date ? String(input.expiration_date) : null,
+        file.web_view_link ?? null,
+        input.notes ? String(input.notes) : null,
+        propertyId,
+        existing.rows[0].id
+      ],
+      schemaName
+    );
+    await updateFile(schemaName, propertyId, fileId, { linked_document_id: updated.rows[0].id, review_status: "linked" });
+    return updated.rows[0];
+  }
   const result = await query(
     `insert into documents
       (property_id, type, subtype, title, expiration_date, file_url, notes, details, drive_file_id)
@@ -522,7 +549,8 @@ export async function deleteFolder(schemaName: string, propertyId: string, folde
 }
 
 export async function listConnections(schemaName: string) {
-  const result = await query(
+  const [result, airbnb] = await Promise.all([
+    query(
     `select pdi.id, pdi.provider, pdi.connected_at, pdi.last_sync_at, pdi.is_active,
             count(pdf.id)::int as folder_count
      from property_drive_integrations pdi
@@ -532,12 +560,37 @@ export async function listConnections(schemaName: string) {
      order by pdi.connected_at desc`,
     [],
     schemaName
-  );
+    ),
+    query(
+      `select p.id as property_id,
+              p.alias as property_alias,
+              p.airbnb_enabled,
+              p.airbnb_last_sync_at,
+              (p.airbnb_ical_url is not null and p.airbnb_ical_url <> '') as connected,
+              count(pr.id)::int as reservations_imported,
+              count(i.id) filter (where i.amount_status = 'missing' or i.amount is null)::int as incomes_missing_amount
+       from properties p
+       left join property_reservations pr on pr.property_id = p.id and pr.source = 'airbnb' and coalesce(pr.is_demo,false) = false
+       left join income i on i.property_id = p.id and i.reservation_id = pr.id
+       where p.active = true
+       group by p.id
+       order by p.airbnb_last_sync_at desc nulls last, p.alias asc`,
+      [],
+      schemaName
+    )
+  ]);
   return {
     google_drive: {
       configured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI),
       scope: env.GOOGLE_DRIVE_SCOPE,
       connections: result.rows
+    },
+    airbnb_ical: {
+      configured: true,
+      method: "ical_per_property",
+      oauth: false,
+      official_api: false,
+      connections: airbnb.rows
     }
   };
 }

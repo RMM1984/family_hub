@@ -44,6 +44,7 @@ export interface Income {
   source: string;
   amount: number | null;
   income_date: string;
+  description?: string;
   guest_name?: string;
   check_in?: string;
   check_out?: string;
@@ -51,6 +52,9 @@ export interface Income {
   reservation_id?: string | null;
   imported_from_airbnb?: boolean;
   amount_status?: "missing" | "manual" | "estimated" | "confirmed";
+  data_origin?: string;
+  is_demo?: boolean;
+  source_method?: string | null;
   property_alias?: string;
   property_address?: string;
 }
@@ -65,12 +69,20 @@ export interface Reservation {
   check_in: string;
   check_out: string;
   nights?: number;
+  guest_count?: number | null;
+  guest_count_status?: "missing" | "imported" | "manual" | null;
+  amount_status?: "missing" | "manual" | "estimated" | "confirmed" | null;
   status: "confirmed" | "cancelled" | "blocked" | "removed_from_calendar";
   imported_from_ical: boolean;
   synced_at?: string;
   income_id?: string | null;
   income_amount?: number | null;
   income_amount_status?: "missing" | "manual" | "estimated" | "confirmed" | null;
+  income_data_origin?: string | null;
+  income_is_demo?: boolean | null;
+  source_method?: string;
+  data_origin?: string;
+  is_demo?: boolean;
   property_alias?: string;
 }
 
@@ -84,6 +96,7 @@ export interface AirbnbStats {
   occupancy_current_month: number;
   occupancy_next_30_days: number;
   incomes_missing_amount: number;
+  guests_known?: number;
 }
 
 export interface DocumentItem {

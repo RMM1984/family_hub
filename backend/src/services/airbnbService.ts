@@ -12,7 +12,9 @@ export async function listReservations(schemaName: string, propertyId: string) {
     `select pr.*,
             i.id as income_id,
             i.amount as income_amount,
-            i.amount_status as income_amount_status
+            i.amount_status as income_amount_status,
+            i.data_origin as income_data_origin,
+            i.is_demo as income_is_demo
      from property_reservations pr
      left join income i on i.reservation_id = pr.id and i.property_id = pr.property_id
      where pr.property_id = $1
@@ -73,19 +75,40 @@ export async function syncAirbnb(schemaName: string, propertyId: string) {
   for (const event of events) {
     const result = await query(
       `insert into property_reservations
-        (property_id, source, external_id, title, guest_name, check_in, check_out, nights, status, imported_from_ical, raw_ical, synced_at)
-       values ($1,'airbnb',$2,$3,$4,$5,$6,$7,'confirmed',true,$8,now())
+        (property_id, source, source_method, data_origin, is_demo, external_id, title, guest_name, guest_count, guest_count_status, check_in, check_out, nights, status, imported_from_ical, raw_summary, raw_description, raw_ical, synced_at, imported_at, last_seen_at, amount_status)
+       values ($1,'airbnb','ical','airbnb_ical',false,$2,$3,$4,$5,$6,$7,$8,$9,'confirmed',true,$10,$11,$12,now(),now(),now(),'missing')
        on conflict (property_id, source, external_id) do update set
         title = excluded.title,
-        guest_name = excluded.guest_name,
+        guest_name = coalesce(property_reservations.guest_name, excluded.guest_name),
+        guest_count = coalesce(property_reservations.guest_count, excluded.guest_count),
+        guest_count_status = case when property_reservations.guest_count_status = 'manual' then property_reservations.guest_count_status else excluded.guest_count_status end,
         check_in = excluded.check_in,
         check_out = excluded.check_out,
         nights = excluded.nights,
         status = 'confirmed',
+        source_method = 'ical',
+        data_origin = 'airbnb_ical',
+        is_demo = false,
+        raw_summary = excluded.raw_summary,
+        raw_description = excluded.raw_description,
         raw_ical = excluded.raw_ical,
-        synced_at = now()
+        synced_at = now(),
+        last_seen_at = now()
        returning id, (xmax = 0) as inserted`,
-      [propertyId, event.uid, event.title ?? event.guest_name, event.guest_name, event.check_in, event.check_out, event.nights, JSON.stringify(event)],
+      [
+        propertyId,
+        event.uid,
+        event.title ?? "Reserva Airbnb",
+        event.guest_name ?? null,
+        event.guest_count ?? null,
+        event.guest_count_status ?? "missing",
+        event.check_in,
+        event.check_out,
+        event.nights,
+        event.raw_summary ?? event.title ?? null,
+        event.raw_description ?? event.description ?? null,
+        JSON.stringify(event)
+      ],
       schemaName
     );
     if (result.rows[0]?.inserted) imported += 1;
@@ -137,7 +160,8 @@ export async function getStats(schemaName: string, propertyId: string) {
     booked_nights_next_30_days: bookedNext30,
     occupancy_current_month: percentage(bookedCurrentMonth, availableCurrentMonth),
     occupancy_next_30_days: percentage(bookedNext30, availableNext30),
-    incomes_missing_amount: reservations.filter((reservation) => reservation.income_amount_status === "missing" || reservation.income_amount === null || reservation.income_amount === undefined).length
+    incomes_missing_amount: reservations.filter((reservation) => reservation.income_amount_status === "missing" || reservation.income_amount === null || reservation.income_amount === undefined).length,
+    guests_known: reservations.reduce((sum, reservation) => sum + Number(reservation.guest_count ?? 0), 0)
   };
 }
 
@@ -180,6 +204,8 @@ export async function createIncomeFromReservation(schemaName: string, propertyId
   const amount = input.amount === undefined || input.amount === null || input.amount === "" ? null : Number(input.amount);
   const amountStatus = normalizeAmountStatus(input.amount_status, amount);
   if (existing.rows[0]) {
+    const current = existing.rows[0] as any;
+    const nextAmountStatus = amount === null ? current.amount_status ?? "missing" : amountStatus;
     const result = await query(
       `update income
        set amount = coalesce($1, amount),
@@ -187,18 +213,21 @@ export async function createIncomeFromReservation(schemaName: string, propertyId
            guest_name = coalesce($3, guest_name),
            check_in = $4,
            check_out = $5,
-           nights = $6
+           nights = $6,
+           source_method = coalesce(source_method, 'ical'),
+           data_origin = case when coalesce(is_demo,false) then data_origin else 'airbnb_ical' end
        where property_id = $7 and reservation_id = $8
        returning *`,
-      [amount, amountStatus, reservation.guest_name, reservation.check_in, reservation.check_out, reservation.nights, propertyId, reservationId],
+      [amount, nextAmountStatus, reservation.guest_name, reservation.check_in, reservation.check_out, reservation.nights, propertyId, reservationId],
       schemaName
     );
+    await syncReservationIncomeStatus(schemaName, propertyId, reservationId, result.rows[0]);
     return result.rows[0];
   }
   const result = await query(
     `insert into income
-      (property_id, reservation_id, source, amount, income_date, description, guest_name, check_in, check_out, nights, airbnb_reservation_id, imported_from_ical, imported_from_airbnb, amount_status)
-     values ($1,$2,'airbnb',$3,$4,$5,$6,$7,$8,$9,$10,true,true,$11)
+      (property_id, reservation_id, source, source_method, data_origin, is_demo, amount, income_date, description, guest_name, check_in, check_out, nights, airbnb_reservation_id, imported_from_ical, imported_from_airbnb, amount_status)
+     values ($1,$2,'airbnb','ical','airbnb_ical',false,$3,$4,$5,$6,$7,$8,$9,$10,true,true,$11)
      returning *`,
     [
       propertyId,
@@ -215,6 +244,54 @@ export async function createIncomeFromReservation(schemaName: string, propertyId
     ],
     schemaName
   );
+  await syncReservationIncomeStatus(schemaName, propertyId, reservationId, result.rows[0]);
+  return result.rows[0];
+}
+
+export async function updateReservationAmount(schemaName: string, propertyId: string, reservationId: string, input: Record<string, unknown>) {
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount < 0) {
+    const err = new Error("El importe debe ser un numero valido") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const income = await createIncomeFromReservation(schemaName, propertyId, reservationId, { amount, amount_status: "manual" });
+  const reservation = await query("select * from property_reservations where property_id = $1 and id = $2", [propertyId, reservationId], schemaName);
+  return { reservation: reservation.rows[0], income };
+}
+
+export async function updateGuestCount(schemaName: string, propertyId: string, reservationId: string, input: Record<string, unknown>) {
+  await validateProperty(schemaName, propertyId);
+  const guestCount = input.guest_count === null || input.guest_count === "" ? null : Number(input.guest_count);
+  if (guestCount !== null && (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 50)) {
+    const err = new Error("El numero de huespedes debe ser valido") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const result = await query(
+    `update property_reservations
+     set guest_count = $1,
+         guest_count_status = case when $1::int is null then 'missing' else 'manual' end
+     where property_id = $2 and id = $3
+     returning *`,
+    [guestCount, propertyId, reservationId],
+    schemaName
+  );
+  if (!result.rows[0]) {
+    const err = new Error("Reserva no encontrada en esta vivienda") as Error & { status: number };
+    err.status = 404;
+    throw err;
+  }
+  return result.rows[0];
+}
+
+export async function disconnectAirbnb(schemaName: string, propertyId: string) {
+  await validateProperty(schemaName, propertyId);
+  const result = await query(
+    "update properties set airbnb_ical_url = null, airbnb_enabled = false where id = $1 returning *",
+    [propertyId],
+    schemaName
+  );
   return result.rows[0];
 }
 
@@ -222,6 +299,14 @@ async function ensureIncomeForReservation(schemaName: string, propertyId: string
   const existing = await query("select id from income where property_id = $1 and reservation_id = $2", [propertyId, reservationId], schemaName);
   await createIncomeFromReservation(schemaName, propertyId, reservationId, {});
   return !existing.rows[0];
+}
+
+async function syncReservationIncomeStatus(schemaName: string, propertyId: string, reservationId: string, income: any) {
+  await query(
+    "update property_reservations set income_id = $1, amount_status = $2 where property_id = $3 and id = $4",
+    [income.id, income.amount_status ?? "missing", propertyId, reservationId],
+    schemaName
+  );
 }
 
 export async function updatePropertyOperation(schemaName: string, propertyId: string, input: Record<string, unknown>) {
