@@ -55,6 +55,13 @@ export const getPropertyAirbnbStats = (id: string) => withFallback(() => api.get
 export const savePropertyAirbnbIcal = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/airbnb/ical`, data).then((r) => r.data.data);
 export const syncPropertyAirbnb = (id: string) => api.post(`/properties/${id}/airbnb/sync`).then((r) => r.data.data);
 export const disconnectPropertyAirbnb = (id: string) => api.delete(`/properties/${id}/airbnb/ical`).then((r) => r.data.data);
+export const importAirbnbEarningsCsv = (id: string, file: File) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.post(`/properties/${id}/airbnb/earnings/import-csv`, form).then((r) => r.data.data);
+};
+export const getAirbnbEarningsImport = (propertyId: string, importId: string) => api.get(`/properties/${propertyId}/airbnb/earnings/imports/${importId}`).then((r) => r.data.data);
+export const applyAirbnbEarningsImport = (propertyId: string, importId: string, data: Record<string, unknown> = {}) => api.post(`/properties/${propertyId}/airbnb/earnings/imports/${importId}/apply`, data).then((r) => r.data.data);
 export const createReservationIncome = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/reservations/${reservationId}/create-income`, data).then((r) => r.data.data);
 export const updateReservationAmount = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/reservations/${reservationId}/amount`, data).then((r) => r.data.data);
 export const updateReservationGuestCount = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/reservations/${reservationId}/guest-count`, data).then((r) => r.data.data);

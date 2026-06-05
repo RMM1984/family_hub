@@ -47,8 +47,8 @@ export default function ConnectionsPage() {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="font-bold">Airbnb iCal</h3>
-                <p className="text-sm text-slate-500">Metodo: URL iCal por vivienda · sin OAuth · sin API oficial</p>
+                <h3 className="font-bold">Airbnb iCal + CSV</h3>
+                <p className="text-sm text-slate-500">Metodo: URL iCal por vivienda - CSV de ingresos - sin OAuth - sin API oficial</p>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">{connectedAirbnb.length} viviendas conectadas</span>
             </div>
@@ -59,7 +59,10 @@ export default function ConnectionsPage() {
                     <div>
                       <p className="font-semibold">{item.property_alias}</p>
                       <p className="text-sm text-slate-500">
-                        {item.connected ? "Conectado" : "No configurado"} · ultima sincronizacion: {formatDate(item.airbnb_last_sync_at)} · reservas: {item.reservations_imported ?? 0} · pendientes: {item.incomes_missing_amount ?? 0}
+                        {item.connected ? "Conectado" : "No configurado"} - ultima sincronizacion: {formatDate(item.airbnb_last_sync_at)} - reservas: {item.reservations_imported ?? 0} - pendientes: {item.incomes_missing_amount ?? 0}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        CSV ingresos: {item.last_csv_imported_at ? `${formatDate(item.last_csv_imported_at)} - ${labelCsvStatus(item.csv_import_status)}` : "sin importar"}
                       </p>
                     </div>
                     <Link href={`/properties/${item.property_id}?tab=Reservas`} className="rounded-md bg-ink px-3 py-2 text-sm font-semibold text-white">Gestionar</Link>
@@ -80,8 +83,8 @@ export default function ConnectionsPage() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-bold">{folder.drive_folder_name}</p>
-                <p className="text-sm text-slate-500">{folder.property_alias} · {folder.folder_type} · {folder.provider_hint || "sin proveedor"}</p>
-                <p className="mt-1 text-xs text-slate-500">Ultima sincronizacion: {formatDate(folder.last_sync_at)} · archivos: {folder.file_count ?? 0}</p>
+                <p className="text-sm text-slate-500">{folder.property_alias} - {folder.folder_type} - {folder.provider_hint || "sin proveedor"}</p>
+                <p className="mt-1 text-xs text-slate-500">Ultima sincronizacion: {formatDate(folder.last_sync_at)} - archivos: {folder.file_count ?? 0}</p>
               </div>
             </div>
           </Card>
@@ -90,4 +93,15 @@ export default function ConnectionsPage() {
       </div>
     </div>
   );
+}
+
+function labelCsvStatus(value?: string | null) {
+  const labels: Record<string, string> = {
+    pending_review: "pendiente de revision",
+    ready_to_apply: "lista para aplicar",
+    needs_review: "necesita revision",
+    partially_applied: "parcialmente aplicada",
+    applied: "aplicada"
+  };
+  return labels[String(value ?? "")] ?? String(value ?? "pendiente");
 }

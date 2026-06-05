@@ -16,7 +16,9 @@ import {
   deleteDriveFolder,
   disconnectPropertyAirbnb,
   disconnectPropertyDrive,
+  applyAirbnbEarningsImport,
   getAvailableDriveFolders,
+  importAirbnbEarningsCsv,
   getPropertyAirbnbStats,
   getProperty,
   getPropertyDocuments,
@@ -42,7 +44,7 @@ import {
   updateReservationGuestCount
 } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/format";
-import type { AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property, Reservation } from "@/types";
+import type { AirbnbEarningsImport, AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property, Reservation } from "@/types";
 
 type Tab = "Resumen" | "Reservas" | "Contrato / Renta" | "Ingresos" | "Gastos" | "Documentos / Drive" | "Estadisticas";
 
@@ -55,6 +57,7 @@ export default function PropertyDetailPage() {
   const [tab, setTab] = useState<Tab>(requestedTab === "Drive" ? "Documentos / Drive" : requestedTab === "Reservas" ? "Reservas" : "Resumen");
   const [showDemoData, setShowDemoData] = useState(false);
   const [incomeFilter, setIncomeFilter] = useState("todos");
+  const [earningsImport, setEarningsImport] = useState<AirbnbEarningsImport | null>(null);
   const { data: property } = useQuery<Property>({ queryKey: ["property", propertyId], queryFn: () => getProperty(propertyId) });
   const operationType = property?.operation_type ?? property?.rental_type ?? (property?.type === "airbnb" ? "tourist" : property?.type ?? "mixed");
   const showAirbnb = operationType === "tourist" || operationType === "mixed" || Boolean(property?.airbnb_enabled);
@@ -100,6 +103,20 @@ export default function PropertyDetailPage() {
   const airbnbIcalMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => savePropertyAirbnbIcal(propertyId, data), onSuccess: refresh });
   const airbnbSyncMutation = useMutation({ mutationFn: () => syncPropertyAirbnb(propertyId), onSuccess: refresh });
   const airbnbDisconnectMutation = useMutation({ mutationFn: () => disconnectPropertyAirbnb(propertyId), onSuccess: refresh });
+  const airbnbEarningsImportMutation = useMutation({
+    mutationFn: (file: File) => importAirbnbEarningsCsv(propertyId, file),
+    onSuccess: (data: AirbnbEarningsImport) => {
+      setEarningsImport(data);
+      refresh();
+    }
+  });
+  const airbnbEarningsApplyMutation = useMutation({
+    mutationFn: (importId: string) => applyAirbnbEarningsImport(propertyId, importId, { apply_all_safe: true }),
+    onSuccess: (data: AirbnbEarningsImport) => {
+      setEarningsImport(data);
+      refresh();
+    }
+  });
   const reservationIncomeMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => createReservationIncome(propertyId, reservationId, data), onSuccess: refresh });
   const reservationAmountMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updateReservationAmount(propertyId, reservationId, data), onSuccess: refresh });
   const reservationGuestCountMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updateReservationGuestCount(propertyId, reservationId, data), onSuccess: refresh });
@@ -175,12 +192,17 @@ export default function PropertyDetailPage() {
           property={property}
           reservations={reservations}
           stats={airbnbStats}
+          earningsImport={earningsImport}
           pendingSave={airbnbIcalMutation.isPending}
           pendingSync={airbnbSyncMutation.isPending}
-          pendingIncome={reservationIncomeMutation.isPending || reservationAmountMutation.isPending || reservationGuestCountMutation.isPending}
+          pendingIncome={reservationIncomeMutation.isPending || reservationAmountMutation.isPending || reservationGuestCountMutation.isPending || airbnbEarningsApplyMutation.isPending}
+          pendingEarningsImport={airbnbEarningsImportMutation.isPending}
+          pendingEarningsApply={airbnbEarningsApplyMutation.isPending}
           onSaveIcal={(data) => airbnbIcalMutation.mutate(data)}
           onSync={() => airbnbSyncMutation.mutate()}
           onDisconnect={() => airbnbDisconnectMutation.mutate()}
+          onImportEarnings={(file) => airbnbEarningsImportMutation.mutate(file)}
+          onApplyEarnings={(importId) => airbnbEarningsApplyMutation.mutate(importId)}
           onCreateIncome={(reservationId, data) => reservationIncomeMutation.mutate({ reservationId, data })}
           onUpdateAmount={(reservationId, data) => reservationAmountMutation.mutate({ reservationId, data })}
           onUpdateGuestCount={(reservationId, data) => reservationGuestCountMutation.mutate({ reservationId, data })}
@@ -492,12 +514,17 @@ function ReservationsPanel({
   property,
   reservations,
   stats,
+  earningsImport,
   pendingSave,
   pendingSync,
   pendingIncome,
+  pendingEarningsImport,
+  pendingEarningsApply,
   onSaveIcal,
   onSync,
   onDisconnect,
+  onImportEarnings,
+  onApplyEarnings,
   onCreateIncome,
   onUpdateAmount,
   onUpdateGuestCount,
@@ -506,12 +533,17 @@ function ReservationsPanel({
   property: Property;
   reservations: Reservation[];
   stats?: AirbnbStats;
+  earningsImport: AirbnbEarningsImport | null;
   pendingSave: boolean;
   pendingSync: boolean;
   pendingIncome: boolean;
+  pendingEarningsImport: boolean;
+  pendingEarningsApply: boolean;
   onSaveIcal: (data: Record<string, unknown>) => void;
   onSync: () => void;
   onDisconnect: () => void;
+  onImportEarnings: (file: File) => void;
+  onApplyEarnings: (importId: string) => void;
   onCreateIncome: (reservationId: string, data: Record<string, unknown>) => void;
   onUpdateAmount: (reservationId: string, data: Record<string, unknown>) => void;
   onUpdateGuestCount: (reservationId: string, data: Record<string, unknown>) => void;
@@ -523,6 +555,12 @@ function ReservationsPanel({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     onSaveIcal({ airbnb_ical_url: String(form.get("airbnb_ical_url") ?? "") });
+  }
+  function submitEarningsCsv(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const input = event.currentTarget.elements.namedItem("airbnb_csv") as HTMLInputElement | null;
+    const file = input?.files?.[0];
+    if (file) onImportEarnings(file);
   }
   const today = new Date();
   const filteredReservations = reservations.filter((reservation) => {
@@ -558,6 +596,64 @@ function ReservationsPanel({
           <input name="airbnb_ical_url" defaultValue={property.airbnb_ical_url ?? ""} required placeholder="URL iCal de Airbnb" className="h-10 rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
           <Button disabled={pendingSave} className="bg-ink">Guardar URL</Button>
         </form>
+      </Card>
+
+      <Card className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="font-bold">Importar ingresos reales de Airbnb</h3>
+            <p className="mt-2 text-sm text-slate-500">iCal solo sincroniza fechas. Para completar importes reales, descarga un CSV desde el panel de ingresos de Airbnb y súbelo aquí.</p>
+          </div>
+          {earningsImport && (
+            <span className="rounded-md bg-emerald-50 px-3 py-1 text-sm font-semibold text-meadow">
+              {earningsImport.rows_applied} aplicadas de {earningsImport.rows_total}
+            </span>
+          )}
+        </div>
+        <form onSubmit={submitEarningsCsv} className="mt-4 grid gap-3 lg:grid-cols-[1fr_180px]">
+          <input name="airbnb_csv" type="file" accept=".csv,text/csv" required className="block h-10 rounded-md border border-slate-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1 file:text-sm file:font-semibold" />
+          <Button disabled={pendingEarningsImport} className="bg-ink">Subir CSV</Button>
+        </form>
+        {earningsImport && (
+          <div className="mt-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-slate-50 p-3">
+              <p className="text-sm text-slate-600">
+                {earningsImport.filename ?? "CSV Airbnb"} · {earningsImport.rows_matched} coincidencias seguras · estado: {labelEarningsImportStatus(earningsImport.status)}
+              </p>
+              <Button disabled={pendingEarningsApply || earningsImport.rows_matched === 0} onClick={() => onApplyEarnings(earningsImport.id)} className="bg-meadow hover:bg-green-700">
+                Aplicar coincidencias seguras
+              </Button>
+            </div>
+            <div className="overflow-x-auto rounded-md border border-slate-200">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="p-3">Fechas</th>
+                    <th className="p-3">Huésped</th>
+                    <th className="p-3">Importe</th>
+                    <th className="p-3">Coincidencia</th>
+                    <th className="p-3">Ingreso</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {earningsImport.rows.map((row) => (
+                    <tr key={row.id} className="border-t border-slate-200">
+                      <td className="p-3">{formatDate(row.suggested_check_in)} - {formatDate(row.suggested_check_out)}</td>
+                      <td className="p-3">{row.suggested_guest_name ?? "Sin huésped"}</td>
+                      <td className="p-3 font-semibold">{formatCurrency(Number(row.suggested_amount ?? 0))}</td>
+                      <td className="p-3">
+                        <span className={`rounded-md px-2 py-1 text-xs font-semibold ${toneEarningsRow(row.match_status)}`}>
+                          {labelEarningsRowStatus(row.match_status)} {row.match_confidence ? `· ${Number(row.match_confidence).toFixed(2)}` : ""}
+                        </span>
+                      </td>
+                      <td className="p-3">{row.applied ? "Importe confirmado por CSV" : row.income_amount_status ? labelAmountStatus(row.income_amount_status) : "Pendiente"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </Card>
 
       <section className="grid gap-3 md:grid-cols-6">
@@ -629,6 +725,7 @@ function ReservationCard({
           <p className="text-sm text-slate-500">Check-in: {formatDate(reservation.check_in)} · Check-out: {formatDate(reservation.check_out)} · {reservation.nights ?? "-"} noches</p>
           <p className="mt-1 text-sm text-slate-500">Huespedes: {reservation.guest_count ?? "Sin indicar"} · Estado: {labelReservationStatus(reservation.status)}</p>
           <p className="mt-1 text-sm text-slate-500">Ingreso: {hasIncome ? "Ingreso creado" : "sin crear"} · Importe: {amountPending ? "Pendiente de importe" : `${formatCurrency(reservation.income_amount)} · ${labelAmountStatus(reservation.income_amount_status)}`}</p>
+          {reservation.income_data_origin === "airbnb_csv" && !amountPending && <p className="mt-2 inline-flex rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-meadow">Importe confirmado por CSV</p>}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button disabled={pending} onClick={() => onCreateIncome(reservation.id, {})} className="bg-ink">{hasIncome ? "Ingreso creado" : "Crear ingreso"}</Button>
@@ -1094,6 +1191,34 @@ function labelAmountStatus(value?: string | null) {
     confirmed: "Confirmado"
   };
   return labels[String(value ?? "missing")] ?? "Pendiente importe";
+}
+
+function labelEarningsImportStatus(value?: string | null) {
+  const labels: Record<string, string> = {
+    pending_review: "Pendiente de revisión",
+    ready_to_apply: "Lista para aplicar",
+    needs_review: "Necesita revisión",
+    partially_applied: "Parcialmente aplicada",
+    applied: "Aplicada"
+  };
+  return labels[String(value ?? "pending_review")] ?? "Pendiente de revisión";
+}
+
+function labelEarningsRowStatus(value?: string | null) {
+  const labels: Record<string, string> = {
+    matched: "Coincidencia segura",
+    possible_match: "Posible coincidencia",
+    unmatched: "Sin coincidencia",
+    applied: "Aplicada"
+  };
+  return labels[String(value ?? "unmatched")] ?? "Sin coincidencia";
+}
+
+function toneEarningsRow(value?: string | null) {
+  if (value === "applied") return "bg-emerald-50 text-meadow";
+  if (value === "matched") return "bg-blue-50 text-blue-700";
+  if (value === "possible_match") return "bg-yellow-50 text-yellow-700";
+  return "bg-slate-100 text-slate-600";
 }
 
 function maskIcalUrl(value?: string | null) {

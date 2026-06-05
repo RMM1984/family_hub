@@ -566,14 +566,23 @@ export async function listConnections(schemaName: string) {
               p.alias as property_alias,
               p.airbnb_enabled,
               p.airbnb_last_sync_at,
+              latest_csv.uploaded_at as last_csv_imported_at,
+              latest_csv.status as csv_import_status,
               (p.airbnb_ical_url is not null and p.airbnb_ical_url <> '') as connected,
               count(pr.id)::int as reservations_imported,
               count(i.id) filter (where i.amount_status = 'missing' or i.amount is null)::int as incomes_missing_amount
        from properties p
        left join property_reservations pr on pr.property_id = p.id and pr.source = 'airbnb' and coalesce(pr.is_demo,false) = false
        left join income i on i.property_id = p.id and i.reservation_id = pr.id
+       left join lateral (
+         select uploaded_at, status
+         from airbnb_earnings_imports
+         where property_id = p.id
+         order by uploaded_at desc
+         limit 1
+       ) latest_csv on true
        where p.active = true
-       group by p.id
+       group by p.id, latest_csv.uploaded_at, latest_csv.status
        order by p.airbnb_last_sync_at desc nulls last, p.alias asc`,
       [],
       schemaName

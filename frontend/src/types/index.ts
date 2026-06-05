@@ -86,6 +86,46 @@ export interface Reservation {
   property_alias?: string;
 }
 
+export interface AirbnbEarningsImportRow {
+  id: string;
+  import_id: string;
+  property_id: string;
+  row_index: number;
+  raw_data: Record<string, string>;
+  reservation_id?: string | null;
+  income_id?: string | null;
+  match_status: "matched" | "possible_match" | "unmatched" | "applied";
+  match_confidence?: number | string | null;
+  suggested_check_in?: string | null;
+  suggested_check_out?: string | null;
+  suggested_guest_name?: string | null;
+  suggested_amount?: number | string | null;
+  suggested_currency?: string | null;
+  suggested_host_fee?: number | string | null;
+  suggested_cleaning_fee?: number | string | null;
+  suggested_taxes?: number | string | null;
+  suggested_payout?: number | string | null;
+  applied: boolean;
+  applied_at?: string | null;
+  reservation_check_in?: string | null;
+  reservation_check_out?: string | null;
+  reservation_guest_name?: string | null;
+  income_amount?: number | string | null;
+  income_amount_status?: "missing" | "manual" | "estimated" | "confirmed" | null;
+}
+
+export interface AirbnbEarningsImport {
+  id: string;
+  property_id: string;
+  filename?: string | null;
+  status: string;
+  rows_total: number;
+  rows_matched: number;
+  rows_applied: number;
+  uploaded_at?: string;
+  rows: AirbnbEarningsImportRow[];
+}
+
 export interface AirbnbStats {
   reservations_total: number;
   upcoming_reservations: number;
