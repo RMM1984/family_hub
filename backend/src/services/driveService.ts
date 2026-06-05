@@ -7,7 +7,8 @@ import type { AuthUser } from "../types.js";
 
 const documentTypes = new Set(["factura", "contrato", "seguro", "ibi", "comunidad", "mantenimiento", "reserva", "otro"]);
 const folderTypes = new Set(["facturas", "documentos", "contratos", "seguros", "ibi", "comunidad", "mantenimiento", "reservas", "otros"]);
-const reviewStatuses = new Set(["pending_review", "reviewed", "linked", "ignored"]);
+const reviewStatuses = new Set(["pending_review", "registered", "reviewed", "linked", "ignored"]);
+const expenseCategories = new Set(["electricity","water","internet","community","cleaning","ibi","garbage","home_insurance","liability_insurance","rental_insurance","maintenance","repairs","furniture","airbnb_commission","mortgage","other"]);
 
 type DriveFile = {
   id: string;
@@ -309,7 +310,7 @@ export async function updateFile(schemaName: string, propertyId: string, fileId:
   const result = await query(
     `update drive_files
      set document_type = coalesce($1, document_type),
-         expiration_date = $2,
+         expiration_date = case when $2::text = '__KEEP__' then expiration_date else $2::date end,
          linked_expense_id = coalesce($3, linked_expense_id),
          linked_income_id = coalesce($4, linked_income_id),
          linked_document_id = coalesce($5, linked_document_id),
@@ -320,7 +321,7 @@ export async function updateFile(schemaName: string, propertyId: string, fileId:
      returning *`,
     [
       input.document_type === "" ? null : input.document_type ?? null,
-      input.expiration_date === "" ? null : input.expiration_date ?? null,
+      input.expiration_date === undefined ? "__KEEP__" : input.expiration_date === "" ? null : input.expiration_date,
       input.linked_expense_id ?? null,
       input.linked_income_id ?? null,
       input.linked_document_id ?? null,
@@ -360,6 +361,74 @@ export async function linkDocument(schemaName: string, propertyId: string, fileI
   return updateFile(schemaName, propertyId, fileId, { linked_document_id: documentId, review_status: "linked" });
 }
 
+export async function registerExpenseFromFile(schemaName: string, propertyId: string, fileId: string, input: Record<string, unknown>) {
+  await validateProperty(schemaName, propertyId);
+  const file = await getDriveFile(schemaName, propertyId, fileId);
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const err = new Error("El importe del gasto es obligatorio") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const expenseDate = String(input.expense_date ?? "").trim();
+  if (!expenseDate) {
+    const err = new Error("La fecha del gasto es obligatoria") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const result = await query(
+    `insert into expenses
+      (property_id, category, provider, amount, expense_date, description, receipt_url, drive_file_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     returning *`,
+    [
+      propertyId,
+      normalizeExpenseCategory(input.category),
+      null,
+      amount,
+      expenseDate,
+      String(input.description ?? input.concept ?? file.name ?? "Gasto Drive"),
+      file.web_view_link ?? null,
+      file.id
+    ],
+    schemaName
+  );
+  await updateFile(schemaName, propertyId, fileId, { linked_expense_id: result.rows[0].id, review_status: "registered" });
+  return result.rows[0];
+}
+
+export async function saveDocumentFromFile(schemaName: string, propertyId: string, fileId: string, input: Record<string, unknown>) {
+  await validateProperty(schemaName, propertyId);
+  const file = await getDriveFile(schemaName, propertyId, fileId);
+  const title = String(input.title ?? file.name ?? "").trim();
+  if (!title) {
+    const err = new Error("El titulo del documento es obligatorio") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const rawType = String(input.type ?? "otro").trim();
+  const result = await query(
+    `insert into documents
+      (property_id, type, subtype, title, expiration_date, file_url, notes, details, drive_file_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     returning *`,
+    [
+      propertyId,
+      normalizeDocumentRecordType(rawType),
+      rawType,
+      title,
+      input.expiration_date ? String(input.expiration_date) : null,
+      file.web_view_link ?? null,
+      input.notes ? String(input.notes) : null,
+      JSON.stringify({ source: "google_drive", drive_file_id: file.id, drive_file_name: file.name }),
+      file.id
+    ],
+    schemaName
+  );
+  await updateFile(schemaName, propertyId, fileId, { linked_document_id: result.rows[0].id, review_status: "linked" });
+  return result.rows[0];
+}
+
 export async function disconnect(schemaName: string, propertyId: string) {
   await validateProperty(schemaName, propertyId);
   await query("update property_drive_integrations set is_active = false where property_id = $1 and provider = 'google_drive'", [propertyId], schemaName);
@@ -373,6 +442,7 @@ export async function listFolders(schemaName: string, propertyId: string) {
      from property_drive_folders pdf
      left join drive_files df on df.drive_folder_mapping_id = pdf.id
      where pdf.property_id = $1
+       and pdf.drive_folder_id <> 'google_oauth_account'
      group by pdf.id
      order by pdf.connected_at desc`,
     [propertyId],
@@ -603,6 +673,16 @@ async function getFolder(schemaName: string, propertyId: string, folderMappingId
   return result.rows[0] ?? null;
 }
 
+async function getDriveFile(schemaName: string, propertyId: string, fileId: string) {
+  const result = await query("select * from drive_files where property_id = $1 and id = $2", [propertyId, fileId], schemaName);
+  if (!result.rows[0]) {
+    const err = new Error("Archivo Drive no encontrado en esta vivienda") as Error & { status: number };
+    err.status = 404;
+    throw err;
+  }
+  return result.rows[0];
+}
+
 async function upsertFolderMapping(schemaName: string, propertyId: string, input: Record<string, unknown>) {
   const result = await query(
     `insert into property_drive_folders
@@ -654,6 +734,41 @@ function normalizeProviderHint(value: unknown, folderName: string) {
     if (name.includes(provider)) return provider;
   }
   return null;
+}
+
+function normalizeExpenseCategory(value: unknown) {
+  const raw = String(value ?? "").toLowerCase().trim();
+  const aliases: Record<string, string> = {
+    suministros: "electricity",
+    comunidad: "community",
+    seguro: "home_insurance",
+    impuestos: "ibi",
+    mantenimiento: "maintenance",
+    reforma: "repairs",
+    limpieza: "cleaning",
+    mobiliario: "furniture",
+    hipoteca: "mortgage",
+    otros: "other"
+  };
+  const category = aliases[raw] ?? raw;
+  return expenseCategories.has(category) ? category : "other";
+}
+
+function normalizeDocumentRecordType(value: unknown) {
+  const raw = String(value ?? "").toLowerCase().trim();
+  const aliases: Record<string, string> = {
+    contrato: "contract",
+    seguro: "insurance",
+    ibi: "other",
+    comunidad: "other",
+    certificado: "certificate",
+    garantia: "warranty",
+    garantía: "warranty",
+    manual: "other",
+    otro: "other"
+  };
+  const normalized = aliases[raw] ?? raw;
+  return ["insurance", "license", "certificate", "inspection", "contract", "warranty", "deed", "other"].includes(normalized) ? normalized : "other";
 }
 
 async function fetchDriveFolder(accessToken: string, folderId: string) {

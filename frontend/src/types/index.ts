@@ -167,7 +167,7 @@ export interface DriveFile {
   document_type?: string;
   folder_type?: string;
   provider_hint?: string;
-  review_status?: "pending_review" | "reviewed" | "linked" | "ignored";
+  review_status?: "pending_review" | "registered" | "reviewed" | "linked" | "ignored";
   source_provider?: string;
   source_method?: string;
   source_folder_name?: string;

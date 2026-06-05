@@ -69,5 +69,8 @@ export const syncDriveFolder = (propertyId: string, folderId: string) => api.pos
 export const updateDriveFile = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/drive/files/${fileId}`, data).then((r) => r.data.data);
 export const linkDriveFileExpense = (propertyId: string, fileId: string, expenseId: string) => api.post(`/properties/${propertyId}/drive/files/${fileId}/link-expense`, { expense_id: expenseId }).then((r) => r.data.data);
 export const linkDriveFileDocument = (propertyId: string, fileId: string, documentId: string) => api.post(`/properties/${propertyId}/drive/files/${fileId}/link-document`, { document_id: documentId }).then((r) => r.data.data);
+export const registerDriveFileExpense = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/register-expense`, data).then((r) => r.data.data);
+export const saveDriveFileDocument = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/save-document`, data).then((r) => r.data.data);
+export const disconnectPropertyDrive = (propertyId: string) => api.delete(`/properties/${propertyId}/drive/disconnect`).then((r) => r.data.data);
 export const getConnections = () => withFallback(() => api.get("/connections").then((r) => r.data.data), { google_drive: { configured: false, scope: "", connections: [] } });
 export const getGoogleDriveFolders = () => withFallback(() => api.get("/connections/google-drive/folders").then((r) => r.data.data), []);

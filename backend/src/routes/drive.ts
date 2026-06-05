@@ -66,6 +66,14 @@ driveRouter.post("/files/:fileId/link-document", requireRole("admin"), async (re
   res.json({ data: await drive.linkDocument(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), String(req.body.document_id)) });
 });
 
+driveRouter.post("/files/:fileId/register-expense", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.status(201).json({ data: await drive.registerExpenseFromFile(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), req.body) });
+});
+
+driveRouter.post("/files/:fileId/save-document", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.status(201).json({ data: await drive.saveDocumentFromFile(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), req.body) });
+});
+
 driveRouter.delete("/disconnect", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
   res.json({ data: await drive.disconnect(req.schemaName!, String(req.params.propertyId)) });
 });
