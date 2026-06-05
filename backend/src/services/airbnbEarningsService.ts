@@ -113,11 +113,11 @@ export async function importCsv(schemaName: string, propertyId: string, userId: 
     schemaName
   );
   const importId = created.rows[0].id as string;
-  let matched = 0;
+  let applicable = 0;
 
   for (const row of rows) {
     const match = await matchReservation(schemaName, propertyId, row);
-    if (match.status === "matched") matched += 1;
+    if (canApplyCsvRow(row)) applicable += 1;
     await query(
       `insert into airbnb_earnings_import_rows
        (import_id, property_id, row_index, raw_data, reservation_id, income_id, match_status, match_confidence,
@@ -149,7 +149,7 @@ export async function importCsv(schemaName: string, propertyId: string, userId: 
 
   await query(
     "update airbnb_earnings_imports set rows_matched = $1, status = $2 where id = $3",
-    [matched, matched > 0 ? "ready_to_apply" : "needs_review", importId],
+    [applicable, applicable > 0 ? "ready_to_apply" : "needs_review", importId],
     schemaName
   );
   return getImport(schemaName, propertyId, importId);
@@ -190,8 +190,9 @@ export async function applyImport(schemaName: string, propertyId: string, import
   await validateProperty(schemaName, propertyId);
   const rowIds = Array.isArray(input.row_ids) ? input.row_ids.map(String) : [];
   const confirmOverwrite = Boolean(input.confirm_overwrite);
+  const applyAllSafe = Boolean(input.apply_all_safe);
   const params: unknown[] = [propertyId, importId];
-  const rowClause = rowIds.length > 0 ? `and id = any($3::uuid[])` : "and match_status = 'matched'";
+  const rowClause = rowIds.length > 0 ? `and id = any($3::uuid[])` : applyAllSafe ? "and match_status in ('matched','possible_match','unmatched')" : "and match_status = 'matched'";
   if (rowIds.length > 0) params.push(rowIds);
   const rowsResult = await query(
     `select * from airbnb_earnings_import_rows
@@ -204,11 +205,16 @@ export async function applyImport(schemaName: string, propertyId: string, import
   let applied = 0;
   let skipped = 0;
   for (const row of rowsResult.rows as any[]) {
-    if (!row.reservation_id || row.suggested_amount === null || row.suggested_amount === undefined) {
+    if (row.suggested_amount === null || row.suggested_amount === undefined || !row.suggested_check_in || !row.suggested_check_out) {
       skipped += 1;
       continue;
     }
-    const income = await createIncomeFromReservation(schemaName, propertyId, row.reservation_id, {});
+    const reservationId = row.reservation_id ?? await createReservationFromCsvRow(schemaName, propertyId, row);
+    if (!reservationId) {
+      skipped += 1;
+      continue;
+    }
+    const income = await createIncomeFromReservation(schemaName, propertyId, reservationId, {});
     const current = await query("select * from income where property_id = $1 and id = $2", [propertyId, income.id], schemaName);
     const currentIncome = current.rows[0] as any;
     const guestName = cleanText(row.suggested_guest_name);
@@ -220,7 +226,7 @@ export async function applyImport(schemaName: string, propertyId: string, import
            guest_count = coalesce($3, guest_count),
            guest_count_status = case when $3::int is null then guest_count_status else 'imported' end
        where property_id = $4 and id = $5`,
-      [guestName, guestName ? `Airbnb - ${guestName}` : null, guestCount, propertyId, row.reservation_id],
+      [guestName, guestName ? `Airbnb - ${guestName}` : null, guestCount, propertyId, reservationId],
       schemaName
     );
     const hasProtectedAmount = ["manual", "confirmed"].includes(String(currentIncome?.amount_status ?? "")) && currentIncome.amount !== null && currentIncome.amount !== undefined;
@@ -245,7 +251,7 @@ export async function applyImport(schemaName: string, propertyId: string, import
        returning *`,
       [
         amount,
-        row.reservation_id,
+        reservationId,
         guestName,
         guestName ? `Airbnb - ${guestName}` : null,
         JSON.stringify({
@@ -265,12 +271,12 @@ export async function applyImport(schemaName: string, propertyId: string, import
     );
     await query(
       "update property_reservations set income_id = $1, amount_status = 'confirmed', data_origin = 'airbnb_csv' where property_id = $2 and id = $3",
-      [income.id, propertyId, row.reservation_id],
+      [income.id, propertyId, reservationId],
       schemaName
     );
     await query(
-      "update airbnb_earnings_import_rows set applied = true, applied_at = now(), match_status = 'applied', income_id = $1 where property_id = $2 and id = $3",
-      [income.id, propertyId, row.id],
+      "update airbnb_earnings_import_rows set applied = true, applied_at = now(), match_status = 'applied', reservation_id = $1, income_id = $2 where property_id = $3 and id = $4",
+      [reservationId, income.id, propertyId, row.id],
       schemaName
     );
     applied += 1;
@@ -280,7 +286,7 @@ export async function applyImport(schemaName: string, propertyId: string, import
     `update airbnb_earnings_imports
      set rows_applied = (select count(*)::int from airbnb_earnings_import_rows where import_id = $1 and applied = true),
          status = case
-           when (select count(*) from airbnb_earnings_import_rows where import_id = $1 and applied = false and match_status in ('matched','possible_match')) = 0 then 'applied'
+           when (select count(*) from airbnb_earnings_import_rows where import_id = $1 and applied = false and match_status in ('matched','possible_match','unmatched')) = 0 then 'applied'
            else 'partially_applied'
          end,
          metadata = coalesce(metadata, '{}'::jsonb) || $2::jsonb
@@ -289,6 +295,51 @@ export async function applyImport(schemaName: string, propertyId: string, import
     schemaName
   );
   return getImport(schemaName, propertyId, importId);
+}
+
+async function createReservationFromCsvRow(schemaName: string, propertyId: string, row: any) {
+  const guestName = cleanText(row.suggested_guest_name);
+  const guestCount = guestCountFromRaw(row.raw_data);
+  const confirmationCode = cleanText(row.raw_data?.codigodeconfirmacion ?? row.raw_data?.codigo ?? row.raw_data?.reservationcode);
+  const externalId = confirmationCode ? `csv:${confirmationCode}` : `csv:${row.suggested_check_in}:${row.suggested_check_out}:${normalizeHeader(guestName ?? "sin-huesped")}`;
+  const result = await query(
+    `insert into property_reservations
+      (property_id, source, external_id, title, guest_name, check_in, check_out, nights, status,
+       imported_from_ical, raw_ical, source_method, data_origin, is_demo, guest_count, guest_count_status, amount_status, synced_at)
+     values ($1,'airbnb',$2,$3,$4,$5::date,$6::date,$7,'confirmed',
+       false,$8::jsonb,'csv','airbnb_csv',false,$9,$10,'confirmed',now())
+     on conflict (property_id, source, external_id) do update set
+       title = excluded.title,
+       guest_name = excluded.guest_name,
+       check_in = excluded.check_in,
+       check_out = excluded.check_out,
+       nights = excluded.nights,
+       status = excluded.status,
+       imported_from_ical = false,
+       raw_ical = excluded.raw_ical,
+       source_method = 'csv',
+       data_origin = 'airbnb_csv',
+       is_demo = false,
+       guest_count = coalesce(excluded.guest_count, property_reservations.guest_count),
+       guest_count_status = excluded.guest_count_status,
+       amount_status = 'confirmed',
+       synced_at = now()
+     returning id`,
+    [
+      propertyId,
+      externalId,
+      guestName ? `Airbnb - ${guestName}` : "Airbnb",
+      guestName,
+      row.suggested_check_in,
+      row.suggested_check_out,
+      daysBetween(row.suggested_check_in, row.suggested_check_out),
+      JSON.stringify(row.raw_data ?? {}),
+      guestCount,
+      guestCount === null ? "missing" : "imported"
+    ],
+    schemaName
+  );
+  return result.rows[0]?.id ?? null;
 }
 
 function parseCsvFile(content: string) {
@@ -337,6 +388,10 @@ function parseCsvFile(content: string) {
       };
       return { rowIndex: index + 2, raw, normalized };
     });
+}
+
+function canApplyCsvRow(row: ParsedCsvRow) {
+  return Boolean(row.normalized.check_in && row.normalized.check_out && row.normalized.amount !== null && row.normalized.amount !== undefined);
 }
 
 async function matchReservation(schemaName: string, propertyId: string, row: ParsedCsvRow): Promise<MatchResult> {

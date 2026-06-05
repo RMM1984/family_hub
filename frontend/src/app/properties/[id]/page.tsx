@@ -47,6 +47,7 @@ import {
   updateDriveFile,
   updateDriveFolder,
   updatePropertyDocument,
+  updatePropertyIncome,
   updatePropertyOperation,
   updatePropertyReservation,
   updateReservationAmount,
@@ -161,6 +162,7 @@ export default function PropertyDetailPage() {
   const expenseMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyExpense(propertyId, data), onSuccess: refresh });
   const monthlyExpenseMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => savePropertyMonthlyExpenses(propertyId, data), onSuccess: refresh });
   const incomeMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyIncome(propertyId, data), onSuccess: refresh });
+  const incomeUpdateMutation = useMutation({ mutationFn: ({ incomeId, data }: { incomeId: string; data: Record<string, unknown> }) => updatePropertyIncome(propertyId, incomeId, data), onSuccess: refresh });
   const propertyOperationMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => updatePropertyOperation(propertyId, data), onSuccess: refresh });
   const airbnbIcalMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => savePropertyAirbnbIcal(propertyId, data), onSuccess: refresh });
   const airbnbSyncMutation = useMutation({ mutationFn: () => syncPropertyAirbnb(propertyId), onSuccess: refresh });
@@ -304,7 +306,12 @@ export default function PropertyDetailPage() {
                 <YearSelector year={financeYear} onChange={setFinanceYear} />
               </div>
             </Card>
-            <GroupedIncomeView data={groupedIncome} filter={incomeFilter} />
+            <GroupedIncomeView
+              data={groupedIncome}
+              filter={incomeFilter}
+              pending={incomeUpdateMutation.isPending}
+              onUpdate={(incomeId, data) => incomeUpdateMutation.mutate({ incomeId, data })}
+            />
           </section>
         </section>
       )}
@@ -691,7 +698,18 @@ function YearSelector({ year, onChange }: { year: number; onChange: (year: numbe
   );
 }
 
-function GroupedIncomeView({ data, filter }: { data?: GroupedFinance<Income>; filter: string }) {
+function GroupedIncomeView({
+  data,
+  filter,
+  pending,
+  onUpdate
+}: {
+  data?: GroupedFinance<Income>;
+  filter: string;
+  pending: boolean;
+  onUpdate: (incomeId: string, data: Record<string, unknown>) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
   const months = (data?.months ?? []).map((month) => ({ ...month, items: month.items.filter((item) => filterIncome(item, filter)) })).filter((month) => month.items.length > 0);
   return (
     <section className="space-y-3">
@@ -701,7 +719,20 @@ function GroupedIncomeView({ data, filter }: { data?: GroupedFinance<Income>; fi
         return (
           <Card key={month.month} className="overflow-hidden">
             <MonthHeader label={month.label} totalLabel="Total ingresos" total={total} />
-            {month.items.map((item) => <IncomeRow key={item.id} item={item} />)}
+            {month.items.map((item) => (
+              <IncomeRow
+                key={item.id}
+                item={item}
+                editing={editingId === item.id}
+                pending={pending}
+                onEdit={() => setEditingId(editingId === item.id ? null : item.id)}
+                onCancel={() => setEditingId(null)}
+                onUpdate={(data) => {
+                  onUpdate(item.id, data);
+                  setEditingId(null);
+                }}
+              />
+            ))}
           </Card>
         );
       })}
@@ -1652,6 +1683,14 @@ function parseMoneyInput(value: FormDataEntryValue | null) {
   return Number.isFinite(amount) ? amount : 0;
 }
 
+function parseNullableMoneyInput(value: FormDataEntryValue | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/\./g, "").replace(",", ".");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : null;
+}
+
 function formatMonthLabel(month: string) {
   return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(new Date(`${month}-01T12:00:00`));
 }
@@ -1688,19 +1727,113 @@ function Row({ title, subtitle, amount }: { title: string; subtitle: string; amo
   );
 }
 
-function IncomeRow({ item }: { item: Income }) {
+function IncomeRow({
+  item,
+  editing,
+  pending: saving,
+  onEdit,
+  onCancel,
+  onUpdate
+}: {
+  item: Income;
+  editing: boolean;
+  pending: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onUpdate: (data: Record<string, unknown>) => void;
+}) {
   const pending = item.amount_status === "missing" || item.amount === null || item.amount === undefined;
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-slate-200 p-4 last:border-b-0">
-      <div className="min-w-0">
-        <p className="font-semibold">{item.source === "airbnb" ? item.description ?? (item.guest_name ? `Airbnb - ${item.guest_name}` : "Airbnb") : item.guest_name ?? item.description ?? "Ingreso"}</p>
-        <p className="truncate text-sm text-slate-500">
-          {item.guest_name ?? "Huesped sin indicar"} · {formatDate(item.check_in)} - {formatDate(item.check_out)} · {item.nights ?? "-"} noches
-        </p>
-        {item.is_demo && <p className="mt-1 text-xs font-semibold text-slate-500">Dato demo</p>}
+    <div className="border-b border-slate-200 p-4 last:border-b-0">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="font-semibold">{item.source === "airbnb" ? item.description ?? (item.guest_name ? `Airbnb - ${item.guest_name}` : "Airbnb") : item.guest_name ?? item.description ?? "Ingreso"}</p>
+          <p className="truncate text-sm text-slate-500">
+            {item.guest_name ?? "Huesped sin indicar"} · {formatDate(item.check_in)} - {formatDate(item.check_out)} · {item.nights ?? "-"} noches
+          </p>
+          {item.is_demo && <p className="mt-1 text-xs font-semibold text-slate-500">Dato demo</p>}
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <p className={`font-bold ${pending ? "text-sun" : ""}`}>{pending ? "Pendiente de importe" : formatCurrency(item.amount)}</p>
+          <Button disabled={saving} onClick={onEdit} className="bg-white text-ink hover:bg-slate-50">{editing ? "Cancelar" : "Editar"}</Button>
+        </div>
       </div>
-      <p className={`font-bold ${pending ? "text-sun" : ""}`}>{pending ? "Pendiente de importe" : formatCurrency(item.amount)}</p>
+      {editing && <IncomeEditForm item={item} pending={saving} onCancel={onCancel} onSubmit={onUpdate} />}
     </div>
+  );
+}
+
+function IncomeEditForm({
+  item,
+  pending,
+  onSubmit,
+  onCancel
+}: {
+  item: Income;
+  pending: boolean;
+  onSubmit: (data: Record<string, unknown>) => void;
+  onCancel: () => void;
+}) {
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const amount = parseNullableMoneyInput(form.get("amount"));
+    const amountStatus = String(form.get("amount_status") ?? (amount === null ? "missing" : "manual"));
+    onSubmit({
+      amount,
+      amount_status: amount === null ? "missing" : amountStatus,
+      income_date: String(form.get("income_date") ?? "") || item.income_date,
+      description: String(form.get("description") ?? ""),
+      guest_name: String(form.get("guest_name") ?? ""),
+      check_in: String(form.get("check_in") ?? "") || null,
+      check_out: String(form.get("check_out") ?? "") || null,
+      nights: Number(form.get("nights") ?? item.nights ?? 0),
+      currency: "EUR",
+      is_demo: false
+    });
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Importe</span>
+        <input name="amount" inputMode="decimal" defaultValue={item.amount === null || item.amount === undefined ? "" : String(item.amount).replace(".", ",")} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Estado importe</span>
+        <select name="amount_status" defaultValue={item.amount_status ?? "missing"} className="h-10 w-full rounded-md border border-slate-300 px-3">
+          {["missing","manual","estimated","confirmed"].map((option) => <option key={option} value={option}>{labelAmountStatus(option)}</option>)}
+        </select>
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Fecha ingreso</span>
+        <input name="income_date" type="date" defaultValue={dateInputValue(item.income_date)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Huesped</span>
+        <input name="guest_name" defaultValue={item.guest_name ?? ""} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Check-in</span>
+        <input name="check_in" type="date" defaultValue={dateInputValue(item.check_in)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Check-out</span>
+        <input name="check_out" type="date" defaultValue={dateInputValue(item.check_out)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Noches</span>
+        <input name="nights" type="number" min="0" defaultValue={item.nights ?? 0} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block md:col-span-2">
+        <span className="mb-1 block text-sm font-medium">Descripcion</span>
+        <input name="description" defaultValue={item.description ?? ""} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <div className="flex flex-wrap gap-2 md:col-span-2">
+        <Button disabled={pending} className="bg-ink">Guardar ingreso</Button>
+        <Button type="button" disabled={pending} onClick={onCancel} className="bg-white text-ink hover:bg-slate-50">Cancelar</Button>
+      </div>
+    </form>
   );
 }
 

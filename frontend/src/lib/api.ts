@@ -44,6 +44,7 @@ export const getPropertyIncome = (id: string) => withFallback(() => api.get(`/pr
 export const getPropertyDocuments = (id: string) => withFallback(() => api.get(`/properties/${id}/documents`).then((r) => r.data.data), mockDocuments.filter((document) => document.property_id === id));
 export const createPropertyExpense = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/expenses`, data).then((r) => r.data.data);
 export const createPropertyIncome = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/income`, data).then((r) => r.data.data);
+export const updatePropertyIncome = (propertyId: string, incomeId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/income/${incomeId}`, data).then((r) => r.data.data);
 export const createPropertyDocument = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/documents`, data).then((r) => r.data.data);
 export const updatePropertyDocument = (propertyId: string, documentId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/documents/${documentId}`, data).then((r) => r.data.data);
 export const registerDocumentExpense = (propertyId: string, documentId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/documents/${documentId}/register-expense`, data).then((r) => r.data.data);
