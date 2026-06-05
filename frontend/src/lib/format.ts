@@ -1,5 +1,10 @@
 export function formatCurrency(value: number | null | undefined) {
-  return `${new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value ?? 0))}€`;
+  const amount = Number(value ?? 0);
+  const sign = amount < 0 ? "-" : "";
+  const fixed = Math.abs(amount).toFixed(2);
+  const [integer, decimals] = fixed.split(".");
+  const groupedInteger = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${sign}${groupedInteger},${decimals}\u20ac`;
 }
 
 export const formatCurrencyEs = formatCurrency;

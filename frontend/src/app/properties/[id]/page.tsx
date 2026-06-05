@@ -46,6 +46,7 @@ import {
   syncPropertyDrive,
   updateDriveFile,
   updateDriveFolder,
+  updatePropertyDocument,
   updatePropertyOperation,
   updatePropertyReservation,
   updateReservationAmount,
@@ -183,6 +184,7 @@ export default function PropertyDetailPage() {
   const reservationGuestCountMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updateReservationGuestCount(propertyId, reservationId, data), onSuccess: refresh });
   const reservationUpdateMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updatePropertyReservation(propertyId, reservationId, data), onSuccess: refresh });
   const documentMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyDocument(propertyId, data), onSuccess: refresh });
+  const documentUpdateMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: string; data: Record<string, unknown> }) => updatePropertyDocument(propertyId, documentId, data), onSuccess: refresh });
   const documentExpenseMutation = useMutation({ mutationFn: (documentId: string) => registerDocumentExpense(propertyId, documentId, {}), onSuccess: refresh });
   const documentIncomeMutation = useMutation({ mutationFn: (documentId: string) => registerDocumentIncome(propertyId, documentId, {}), onSuccess: refresh });
   const refreshDrive = () => queryClient.invalidateQueries({ queryKey: ["property-drive", propertyId] });
@@ -338,7 +340,8 @@ export default function PropertyDetailPage() {
               </Card>
               <GroupedDocumentView
                 data={groupedDocuments}
-                pending={documentExpenseMutation.isPending || documentIncomeMutation.isPending}
+                pending={documentExpenseMutation.isPending || documentIncomeMutation.isPending || documentUpdateMutation.isPending}
+                onUpdate={(documentId, data) => documentUpdateMutation.mutate({ documentId, data })}
                 onRegisterExpense={(documentId) => documentExpenseMutation.mutate(documentId)}
                 onRegisterIncome={(documentId) => documentIncomeMutation.mutate(documentId)}
               />
@@ -728,14 +731,17 @@ function GroupedExpenseView({ data }: { data?: GroupedFinance<Expense> }) {
 function GroupedDocumentView({
   data,
   pending,
+  onUpdate,
   onRegisterExpense,
   onRegisterIncome
 }: {
   data?: GroupedFinance<DocumentItem>;
   pending: boolean;
+  onUpdate: (documentId: string, data: Record<string, unknown>) => void;
   onRegisterExpense: (documentId: string) => void;
   onRegisterIncome: (documentId: string) => void;
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
   const months = (data?.months ?? []).filter((month) => month.items.length > 0);
   return (
     <section className="space-y-3">
@@ -744,16 +750,32 @@ function GroupedDocumentView({
         <Card key={month.month} className="overflow-hidden">
           <MonthHeader label={month.label} totalLabel="Total documental" total={Number(month.document_total ?? 0)} />
           {month.items.map((item) => (
-            <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4 last:border-b-0">
-              <div className="min-w-0">
-                <p className="font-semibold">{item.title}</p>
-                <p className="text-sm text-slate-500">{labelDocumentType(item.type)} · {formatDate(item.document_date)} · vence {formatDate(item.expiration_date)} · {labelDocumentStatus(item.status)}</p>
+            <div key={item.id} className="border-b border-slate-200 p-4 last:border-b-0">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-semibold">{item.title}</p>
+                  <p className="text-sm text-slate-500">{labelDocumentType(item.type)} · {formatDate(item.document_date)} · vence {formatDate(item.expiration_date)} · {labelDocumentStatus(item.status)}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-bold">{formatCurrency(item.amount ?? item.cost)}</p>
+                  <Button disabled={pending} onClick={() => setEditingId(editingId === item.id ? null : item.id)} className="bg-white text-ink hover:bg-slate-50">
+                    {editingId === item.id ? "Cancelar" : "Editar"}
+                  </Button>
+                  {!item.linked_expense_id && <Button disabled={pending} onClick={() => onRegisterExpense(item.id)} className="bg-white text-ink hover:bg-slate-50">Registrar gasto</Button>}
+                  {!item.linked_income_id && <Button disabled={pending} onClick={() => onRegisterIncome(item.id)} className="bg-white text-meadow hover:bg-slate-50">Registrar ingreso</Button>}
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="font-bold">{formatCurrency(item.amount ?? item.cost)}</p>
-                {!item.linked_expense_id && <Button disabled={pending} onClick={() => onRegisterExpense(item.id)} className="bg-white text-ink hover:bg-slate-50">Registrar gasto</Button>}
-                {!item.linked_income_id && <Button disabled={pending} onClick={() => onRegisterIncome(item.id)} className="bg-white text-meadow hover:bg-slate-50">Registrar ingreso</Button>}
-              </div>
+              {editingId === item.id && (
+                <DocumentEditForm
+                  item={item}
+                  pending={pending}
+                  onCancel={() => setEditingId(null)}
+                  onSubmit={(data) => {
+                    onUpdate(item.id, data);
+                    setEditingId(null);
+                  }}
+                />
+              )}
             </div>
           ))}
         </Card>
@@ -1421,6 +1443,7 @@ function labelDocumentType(value?: string | null) {
 function labelDocumentStatus(value?: string | null) {
   const labels: Record<string, string> = {
     pending_review: "Pendiente",
+    registered: "Registrado",
     reviewed: "Revisado",
     linked: "Asociado",
     ignored: "Ignorado"
@@ -1618,6 +1641,17 @@ function currentMonthKey() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function dateInputValue(value?: string | null) {
+  if (!value) return "";
+  return String(value).slice(0, 10);
+}
+
+function parseMoneyInput(value: FormDataEntryValue | null) {
+  const normalized = String(value ?? "0").trim().replace(/\./g, "").replace(",", ".");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
 function formatMonthLabel(month: string) {
   return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(new Date(`${month}-01T12:00:00`));
 }
@@ -1687,7 +1721,7 @@ function DocumentForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data
       type: String(form.get("type") ?? "otro"),
       subtype: String(form.get("type") ?? "otro"),
       document_date: String(form.get("document_date") ?? ""),
-      amount: Number(String(form.get("amount") ?? "0").replace(",", ".")) || 0,
+      amount: parseMoneyInput(form.get("amount")),
       currency: "EUR",
       expiration_date: String(form.get("expiration_date") ?? "") || null,
       provider: String(form.get("provider") ?? ""),
@@ -1732,7 +1766,7 @@ function DocumentForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data
         <label className="block">
           <span className="mb-1 block text-sm font-medium">Estado</span>
           <select name="status" className="h-10 w-full rounded-md border border-slate-300 px-3">
-            {["pending_review","reviewed","linked","ignored"].map((item) => <option key={item} value={item}>{labelDocumentStatus(item)}</option>)}
+            {["pending_review","registered","reviewed","linked","ignored"].map((item) => <option key={item} value={item}>{labelDocumentStatus(item)}</option>)}
           </select>
         </label>
         <label className="block">
@@ -1742,6 +1776,82 @@ function DocumentForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data
         <Button disabled={pending} className="bg-ink">Guardar documento</Button>
       </form>
     </Card>
+  );
+}
+
+function DocumentEditForm({
+  item,
+  pending,
+  onSubmit,
+  onCancel
+}: {
+  item: DocumentItem;
+  pending: boolean;
+  onSubmit: (data: Record<string, unknown>) => void;
+  onCancel: () => void;
+}) {
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const type = String(form.get("type") ?? "otro");
+    onSubmit({
+      title: String(form.get("title") ?? ""),
+      type,
+      subtype: type,
+      document_date: String(form.get("document_date") ?? "") || null,
+      amount: parseMoneyInput(form.get("amount")),
+      currency: "EUR",
+      expiration_date: String(form.get("expiration_date") ?? "") || null,
+      provider: String(form.get("provider") ?? ""),
+      notes: String(form.get("notes") ?? ""),
+      status: String(form.get("status") ?? "pending_review"),
+      is_demo: false
+    });
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
+      <label className="block md:col-span-2">
+        <span className="mb-1 block text-sm font-medium">Titulo</span>
+        <input name="title" defaultValue={item.title ?? ""} required className="h-10 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Tipo</span>
+        <select name="type" defaultValue={item.type ?? "otro"} className="h-10 w-full rounded-md border border-slate-300 px-3">
+          {["factura","contrato","seguro","ibi","comunidad","certificado","garantia","manual","reserva","otro"].map((option) => <option key={option} value={option}>{labelDocumentType(option)}</option>)}
+        </select>
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Estado</span>
+        <select name="status" defaultValue={item.status ?? "pending_review"} className="h-10 w-full rounded-md border border-slate-300 px-3">
+          {["pending_review","registered","reviewed","linked","ignored"].map((option) => <option key={option} value={option}>{labelDocumentStatus(option)}</option>)}
+        </select>
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Fecha documento</span>
+        <input name="document_date" type="date" defaultValue={dateInputValue(item.document_date)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Vencimiento</span>
+        <input name="expiration_date" type="date" defaultValue={dateInputValue(item.expiration_date)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Importe documental</span>
+        <input name="amount" inputMode="decimal" defaultValue={String(item.amount ?? item.cost ?? 0).replace(".", ",")} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Proveedor</span>
+        <input name="provider" defaultValue={item.provider ?? ""} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block md:col-span-2">
+        <span className="mb-1 block text-sm font-medium">Notas</span>
+        <textarea name="notes" rows={3} defaultValue={item.notes ?? ""} className="w-full rounded-md border border-slate-300 px-3 py-2" />
+      </label>
+      <div className="flex flex-wrap gap-2 md:col-span-2">
+        <Button disabled={pending} className="bg-ink">Guardar cambios</Button>
+        <Button type="button" disabled={pending} onClick={onCancel} className="bg-white text-ink hover:bg-slate-50">Cancelar</Button>
+      </div>
+    </form>
   );
 }
 

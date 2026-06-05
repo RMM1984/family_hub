@@ -194,6 +194,7 @@ export interface DocumentItem {
   linked_income_id?: string | null;
   provider?: string;
   expiration_date?: string;
+  notes?: string | null;
   cost?: number;
   days_to_expire?: number;
   property_alias?: string;
