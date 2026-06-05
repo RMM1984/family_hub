@@ -84,6 +84,46 @@ export default function PropertyDetailPage() {
     const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
     return { totalIncome, totalExpenses, profit: totalIncome - totalExpenses };
   }, [income, expenses]);
+  const profitabilityStats = useMemo(() => {
+    const realIncome = income.filter((item) => !item.is_demo && item.amount_status !== "missing" && item.amount !== null && item.amount !== undefined);
+    const totalIncome = realIncome.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+    const paidNights = realIncome.reduce((sum, item) => sum + Number(item.nights ?? 0), 0);
+    const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+    const categoryTotals = expenses.reduce<Record<string, number>>((acc, item) => {
+      acc[item.category] = (acc[item.category] ?? 0) + Number(item.amount ?? 0);
+      return acc;
+    }, {});
+    const sumCategories = (keys: string[]) => keys.reduce((sum, key) => sum + Number(categoryTotals[key] ?? 0), 0);
+    const guestCounts = reservations
+      .filter((reservation) => !reservation.is_demo && reservation.guest_count !== null && reservation.guest_count !== undefined)
+      .map((reservation) => Number(reservation.guest_count));
+    const guestFrequency = guestCounts.reduce<Record<number, number>>((acc, count) => {
+      acc[count] = (acc[count] ?? 0) + 1;
+      return acc;
+    }, {});
+    const mostRepeatedGuests = Object.entries(guestFrequency)
+      .sort((a, b) => Number(b[1]) - Number(a[1]) || Number(a[0]) - Number(b[0]))[0];
+    const investmentBase = Number(property?.initial_investment ?? 0) + Number(property?.reform_cost ?? 0);
+    const net = totalIncome - totalExpenses;
+    return {
+      totalIncome,
+      totalExpenses,
+      net,
+      averageIncomePerNight: paidNights > 0 ? totalIncome / paidNights : null,
+      paidNights,
+      mostRepeatedGuests: mostRepeatedGuests ? Number(mostRepeatedGuests[0]) : null,
+      mostRepeatedGuestsFrequency: mostRepeatedGuests ? Number(mostRepeatedGuests[1]) : 0,
+      averageGuests: guestCounts.length > 0 ? guestCounts.reduce((sum, count) => sum + count, 0) / guestCounts.length : null,
+      profitabilityPercent: totalIncome > 0 ? (net / totalIncome) * 100 : null,
+      roiPercent: investmentBase > 0 ? (net / investmentBase) * 100 : null,
+      operationalExpenses: sumCategories(["electricity", "water", "gas", "internet"]),
+      cleaningSuppliesSupermarket: sumCategories(["cleaning", "supplies", "supermarket"]),
+      ordinaryExpenses: sumCategories(["ibi", "garbage", "home_insurance", "liability_insurance", "rental_insurance"]),
+      financingExpenses: sumCategories(["mortgage", "financing", "loan_interest"]),
+      repairsExpenses: sumCategories(["maintenance", "repairs"]),
+      categoryTotals
+    };
+  }, [income, expenses, reservations, property?.initial_investment, property?.reform_cost]);
   const tabs: Tab[] = showAirbnb
     ? ["Resumen", "Reservas", "Ingresos", "Gastos", "Documentos / Drive", "Estadisticas"]
     : ["Resumen", "Contrato / Renta", "Ingresos", "Gastos", "Documentos / Drive", "Estadisticas"];
@@ -311,9 +351,44 @@ export default function PropertyDetailPage() {
       )}
 
       {tab === "Estadisticas" && (
-        <section className="grid gap-4 md:grid-cols-2">
-          <Metric title="ROI estimado" value={`${(((totals.profit || 0) / (Number(property.initial_investment ?? 0) + Number(property.reform_cost ?? 0) || 1)) * 100).toFixed(2)}%`} icon={<Wallet className="h-5 w-5" />} />
-          <Metric title="Documentos activos" value={String(documents.length)} icon={<FileText className="h-5 w-5" />} />
+        <section className="space-y-5">
+          <section className="grid gap-4 md:grid-cols-3 xl:grid-cols-4">
+            <Metric title="Ingreso medio/noche" value={profitabilityStats.averageIncomePerNight === null ? "-" : formatCurrency(profitabilityStats.averageIncomePerNight)} icon={<CalendarClock className="h-5 w-5" />} />
+            <Metric title="Huespedes frecuentes" value={profitabilityStats.mostRepeatedGuests === null ? "-" : `${profitabilityStats.mostRepeatedGuests} (${formatNumber(profitabilityStats.averageGuests)})`} icon={<Plus className="h-5 w-5" />} />
+            <Metric title="Ingresos totales" value={formatCurrency(profitabilityStats.totalIncome)} icon={<Wallet className="h-5 w-5" />} />
+            <Metric title="Gastos totales" value={formatCurrency(profitabilityStats.totalExpenses)} icon={<Receipt className="h-5 w-5" />} />
+            <Metric title="Rentabilidad" value={formatPercent(profitabilityStats.profitabilityPercent)} icon={<Wallet className="h-5 w-5" />} />
+            <Metric title="Beneficio neto" value={formatCurrency(profitabilityStats.net)} icon={<Wallet className="h-5 w-5" />} />
+            <Metric title="ROI inversion" value={formatPercent(profitabilityStats.roiPercent)} icon={<Wallet className="h-5 w-5" />} />
+            <Metric title="Noches con importe" value={String(profitabilityStats.paidNights)} icon={<CalendarClock className="h-5 w-5" />} />
+          </section>
+
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <ExpenseStat title="Gastos operativos" subtitle="Luz, agua, gas e internet" amount={profitabilityStats.operationalExpenses} />
+            <ExpenseStat title="Limpieza y compras" subtitle="Limpieza, utiles y supermercado" amount={profitabilityStats.cleaningSuppliesSupermarket} />
+            <ExpenseStat title="Gastos ordinarios" subtitle="IBI, basuras y seguros" amount={profitabilityStats.ordinaryExpenses} />
+            <ExpenseStat title="Gastos de financiacion" subtitle="Hipoteca, financiacion e intereses" amount={profitabilityStats.financingExpenses} />
+            <ExpenseStat title="Reparaciones" subtitle="Mantenimiento y reparaciones" amount={profitabilityStats.repairsExpenses} />
+            <ExpenseStat title="Documentos activos" subtitle="Documentos registrados en esta vivienda" amount={documents.length} plain />
+          </section>
+
+          <Card className="p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-bold">Desglose por categoria</h3>
+                <p className="text-sm text-slate-500">Base actual de gastos registrados para esta vivienda.</p>
+              </div>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {Object.entries(profitabilityStats.categoryTotals).map(([category, amount]) => (
+                <div key={category} className="flex items-center justify-between rounded-md border border-slate-200 p-3">
+                  <p className="font-semibold">{labelExpenseCategory(category)}</p>
+                  <p className="font-bold">{formatCurrency(amount)}</p>
+                </div>
+              ))}
+              {Object.keys(profitabilityStats.categoryTotals).length === 0 && <p className="text-sm text-slate-500">No hay gastos registrados.</p>}
+            </div>
+          </Card>
         </section>
       )}
     </div>
@@ -1193,6 +1268,32 @@ function labelAmountStatus(value?: string | null) {
   return labels[String(value ?? "missing")] ?? "Pendiente importe";
 }
 
+function labelExpenseCategory(value?: string | null) {
+  const labels: Record<string, string> = {
+    electricity: "Luz",
+    water: "Agua",
+    gas: "Gas",
+    internet: "Internet",
+    community: "Comunidad",
+    cleaning: "Limpieza",
+    supplies: "Utiles",
+    supermarket: "Supermercado",
+    ibi: "IBI",
+    garbage: "Basuras",
+    home_insurance: "Seguro hogar",
+    liability_insurance: "Seguro responsabilidad",
+    rental_insurance: "Seguro alquiler",
+    maintenance: "Mantenimiento",
+    repairs: "Reparaciones",
+    furniture: "Mobiliario",
+    mortgage: "Hipoteca",
+    financing: "Financiacion",
+    loan_interest: "Intereses",
+    other: "Otros"
+  };
+  return labels[String(value ?? "other")] ?? String(value ?? "Otros");
+}
+
 function labelEarningsImportStatus(value?: string | null) {
   const labels: Record<string, string> = {
     pending_review: "Pendiente de revisión",
@@ -1254,6 +1355,24 @@ function Metric({ title, value, icon }: { title: string; value: string; icon: Re
       <p className="mt-2 text-2xl font-bold">{value}</p>
     </Card>
   );
+}
+
+function ExpenseStat({ title, subtitle, amount, plain }: { title: string; subtitle: string; amount: number; plain?: boolean }) {
+  return (
+    <Card className="p-5">
+      <p className="text-sm text-slate-500">{subtitle}</p>
+      <p className="mt-1 font-bold">{title}</p>
+      <p className="mt-3 text-2xl font-bold">{plain ? String(amount) : formatCurrency(amount)}</p>
+    </Card>
+  );
+}
+
+function formatPercent(value: number | null) {
+  return value === null ? "-" : `${value.toFixed(2)}%`;
+}
+
+function formatNumber(value: number | null) {
+  return value === null ? "-" : value.toFixed(2);
 }
 
 function Row({ title, subtitle, amount }: { title: string; subtitle: string; amount: number | null | undefined }) {
