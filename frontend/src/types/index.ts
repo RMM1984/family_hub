@@ -32,7 +32,10 @@ export interface Expense {
   category: string;
   provider?: string;
   amount: number;
+  currency?: string | null;
   expense_date: string;
+  source?: string | null;
+  linked_document_id?: string | null;
   expense_month?: string | null;
   monthly_category?: string | null;
   data_origin?: string | null;
@@ -58,9 +61,13 @@ export interface MonthlyExpenseState {
 
 export interface MonthlyProfitRow {
   month: string;
+  label?: string;
   income_total: number;
   expense_total: number;
   net_profit: number;
+  expense_ratio?: number | null;
+  profit_margin?: number | null;
+  pending_income_count?: number;
 }
 
 export interface MonthlyProfitStats {
@@ -73,6 +80,7 @@ export interface Income {
   property_id: string;
   source: string;
   amount: number | null;
+  currency?: string | null;
   income_date: string;
   description?: string;
   guest_name?: string;
@@ -175,12 +183,37 @@ export interface DocumentItem {
   type: string;
   subtype?: string;
   title: string;
+  document_date?: string | null;
+  amount?: number | null;
+  currency?: string | null;
+  status?: "pending_review" | "reviewed" | "linked" | "ignored";
+  source?: string | null;
+  data_origin?: string | null;
+  is_demo?: boolean;
+  linked_expense_id?: string | null;
+  linked_income_id?: string | null;
   provider?: string;
   expiration_date?: string;
   cost?: number;
   days_to_expire?: number;
   property_alias?: string;
   property_address?: string;
+}
+
+export interface GroupedMonth<T> {
+  month: string;
+  label: string;
+  income_total?: number;
+  expense_total?: number;
+  document_total?: number;
+  pending_amount_count?: number;
+  items: T[];
+}
+
+export interface GroupedFinance<T> {
+  year: number;
+  months: GroupedMonth<T>[];
+  year_total: number;
 }
 
 export interface Movement {

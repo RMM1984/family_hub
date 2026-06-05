@@ -18,6 +18,9 @@ import {
   disconnectPropertyDrive,
   applyAirbnbEarningsImport,
   getAvailableDriveFolders,
+  getPropertyGroupedDocuments,
+  getPropertyGroupedExpenses,
+  getPropertyGroupedIncome,
   importAirbnbEarningsCsv,
   getPropertyAirbnbStats,
   getProperty,
@@ -32,6 +35,8 @@ import {
   linkDriveFileDocument,
   linkDriveFileExpense,
   registerDriveFileExpense,
+  registerDocumentExpense,
+  registerDocumentIncome,
   savePropertyAirbnbIcal,
   saveDriveFileDocument,
   savePropertyMonthlyExpenses,
@@ -47,7 +52,7 @@ import {
   updateReservationGuestCount
 } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/format";
-import type { AirbnbEarningsImport, AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, MonthlyExpenseState, MonthlyProfitStats, Property, Reservation } from "@/types";
+import type { AirbnbEarningsImport, AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, GroupedFinance, Income, MonthlyExpenseState, MonthlyProfitStats, Property, Reservation } from "@/types";
 
 type Tab = "Resumen" | "Reservas" | "Contrato / Renta" | "Ingresos" | "Gastos" | "Documentos / Drive" | "Estadisticas";
 
@@ -62,16 +67,20 @@ export default function PropertyDetailPage() {
   const [incomeFilter, setIncomeFilter] = useState("todos");
   const [earningsImport, setEarningsImport] = useState<AirbnbEarningsImport | null>(null);
   const [expenseMonth, setExpenseMonth] = useState(currentMonthKey());
+  const [financeYear, setFinanceYear] = useState(new Date().getFullYear());
   const { data: property } = useQuery<Property>({ queryKey: ["property", propertyId], queryFn: () => getProperty(propertyId) });
   const operationType = property?.operation_type ?? property?.rental_type ?? (property?.type === "airbnb" ? "tourist" : property?.type ?? "mixed");
   const showAirbnb = operationType === "tourist" || operationType === "mixed" || Boolean(property?.airbnb_enabled);
   const { data: income = [] } = useQuery<Income[]>({ queryKey: ["property-income", propertyId], queryFn: () => getPropertyIncome(propertyId) });
+  const { data: groupedIncome } = useQuery<GroupedFinance<Income>>({ queryKey: ["property-grouped-income", propertyId, financeYear], queryFn: () => getPropertyGroupedIncome(propertyId, financeYear) });
   const { data: reservations = [] } = useQuery<Reservation[]>({ queryKey: ["property-reservations", propertyId], queryFn: () => getPropertyReservations(propertyId) });
   const { data: airbnbStats } = useQuery<AirbnbStats>({ queryKey: ["property-airbnb-stats", propertyId], queryFn: () => getPropertyAirbnbStats(propertyId), enabled: showAirbnb });
   const { data: expenses = [] } = useQuery<Expense[]>({ queryKey: ["property-expenses", propertyId], queryFn: () => getPropertyExpenses(propertyId) });
+  const { data: groupedExpenses } = useQuery<GroupedFinance<Expense>>({ queryKey: ["property-grouped-expenses", propertyId, financeYear], queryFn: () => getPropertyGroupedExpenses(propertyId, financeYear) });
   const { data: monthlyExpenses } = useQuery<MonthlyExpenseState>({ queryKey: ["property-monthly-expenses", propertyId, expenseMonth], queryFn: () => getPropertyMonthlyExpenses(propertyId, expenseMonth) });
   const { data: monthlyStats } = useQuery<MonthlyProfitStats>({ queryKey: ["property-monthly-stats", propertyId, Number(expenseMonth.slice(0, 4))], queryFn: () => getPropertyMonthlyStats(propertyId, Number(expenseMonth.slice(0, 4))) });
   const { data: documents = [] } = useQuery<DocumentItem[]>({ queryKey: ["property-documents", propertyId], queryFn: () => getPropertyDocuments(propertyId) });
+  const { data: groupedDocuments } = useQuery<GroupedFinance<DocumentItem>>({ queryKey: ["property-grouped-documents", propertyId, financeYear], queryFn: () => getPropertyGroupedDocuments(propertyId, financeYear) });
   const { data: drive } = useQuery<DriveState>({ queryKey: ["property-drive", propertyId], queryFn: () => getPropertyDrive(propertyId) });
   const {
     data: availableDriveFolders = [],
@@ -136,12 +145,15 @@ export default function PropertyDetailPage() {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["property", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-income", propertyId] });
+    queryClient.invalidateQueries({ queryKey: ["property-grouped-income", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-reservations", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-airbnb-stats", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-expenses", propertyId] });
+    queryClient.invalidateQueries({ queryKey: ["property-grouped-expenses", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-monthly-expenses", propertyId, expenseMonth] });
     queryClient.invalidateQueries({ queryKey: ["property-monthly-stats", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-documents", propertyId] });
+    queryClient.invalidateQueries({ queryKey: ["property-grouped-documents", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["properties"] });
     queryClient.invalidateQueries({ queryKey: ["dashboard"] });
   };
@@ -171,6 +183,8 @@ export default function PropertyDetailPage() {
   const reservationGuestCountMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updateReservationGuestCount(propertyId, reservationId, data), onSuccess: refresh });
   const reservationUpdateMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updatePropertyReservation(propertyId, reservationId, data), onSuccess: refresh });
   const documentMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyDocument(propertyId, data), onSuccess: refresh });
+  const documentExpenseMutation = useMutation({ mutationFn: (documentId: string) => registerDocumentExpense(propertyId, documentId, {}), onSuccess: refresh });
+  const documentIncomeMutation = useMutation({ mutationFn: (documentId: string) => registerDocumentIncome(propertyId, documentId, {}), onSuccess: refresh });
   const refreshDrive = () => queryClient.invalidateQueries({ queryKey: ["property-drive", propertyId] });
   const driveAuthorizeMutation = useMutation({
     mutationFn: () => getPropertyDriveAuthUrl(propertyId),
@@ -271,7 +285,7 @@ export default function PropertyDetailPage() {
           <IncomeForm pending={incomeMutation.isPending} onSubmit={(data) => incomeMutation.mutate(data)} />
           <section className="space-y-3">
             <Card className="p-4">
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {[
                   ["todos", "Todos"],
                   ["manuales", "Manuales"],
@@ -285,14 +299,10 @@ export default function PropertyDetailPage() {
                   <input type="checkbox" checked={showDemoData} onChange={(event) => setShowDemoData(event.target.checked)} />
                   Mostrar datos demo
                 </label>
+                <YearSelector year={financeYear} onChange={setFinanceYear} />
               </div>
             </Card>
-            <Card className="overflow-hidden">
-              {visibleIncome.map((item) => (
-                <IncomeRow key={item.id} item={item} />
-              ))}
-              {visibleIncome.length === 0 && <p className="p-4 text-sm text-slate-500">No hay ingresos para este filtro.</p>}
-            </Card>
+            <GroupedIncomeView data={groupedIncome} filter={incomeFilter} />
           </section>
         </section>
       )}
@@ -308,11 +318,12 @@ export default function PropertyDetailPage() {
           />
           <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
             <ExpenseForm pending={expenseMutation.isPending} onSubmit={(data) => expenseMutation.mutate(data)} />
-            <Card className="overflow-hidden">
-              {expenses.map((item) => (
-                <Row key={item.id} title={item.provider ?? labelExpenseCategory(item.category)} subtitle={`${item.description ?? "Gasto"} · ${formatDate(item.expense_date)}`} amount={item.amount} />
-              ))}
-            </Card>
+            <section className="space-y-3">
+              <Card className="p-4">
+                <YearSelector year={financeYear} onChange={setFinanceYear} />
+              </Card>
+              <GroupedExpenseView data={groupedExpenses} />
+            </section>
           </section>
         </section>
       )}
@@ -321,20 +332,17 @@ export default function PropertyDetailPage() {
         <section className="space-y-5">
           <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
             <DocumentForm pending={documentMutation.isPending} onSubmit={(data) => documentMutation.mutate(data)} />
-            <div className="grid gap-3">
-              {documents.map((item) => (
-                <Card key={item.id} className="p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="grid h-10 w-10 place-items-center rounded-md bg-slate-100"><FileText className="h-5 w-5" /></div>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-bold">{item.title}</p>
-                      <p className="text-sm text-slate-500">{item.provider ?? item.type} · caduca {formatDate(item.expiration_date)}</p>
-                    </div>
-                    <p className="font-bold">{formatCurrency(item.cost)}</p>
-                  </div>
-                </Card>
-              ))}
-            </div>
+            <section className="space-y-3">
+              <Card className="p-4">
+                <YearSelector year={financeYear} onChange={setFinanceYear} />
+              </Card>
+              <GroupedDocumentView
+                data={groupedDocuments}
+                pending={documentExpenseMutation.isPending || documentIncomeMutation.isPending}
+                onRegisterExpense={(documentId) => documentExpenseMutation.mutate(documentId)}
+                onRegisterIncome={(documentId) => documentIncomeMutation.mutate(documentId)}
+              />
+            </section>
           </section>
           {drive && (
             <DrivePanel
@@ -669,6 +677,107 @@ function MonthlyExpensesPanel({
       </form>
     </Card>
   );
+}
+
+function YearSelector({ year, onChange }: { year: number; onChange: (year: number) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+      Año
+      <input type="number" min="2000" max="2100" value={year} onChange={(event) => onChange(Number(event.target.value) || new Date().getFullYear())} className="h-10 w-28 rounded-md border border-slate-300 px-3" />
+    </label>
+  );
+}
+
+function GroupedIncomeView({ data, filter }: { data?: GroupedFinance<Income>; filter: string }) {
+  const months = (data?.months ?? []).map((month) => ({ ...month, items: month.items.filter((item) => filterIncome(item, filter)) })).filter((month) => month.items.length > 0);
+  return (
+    <section className="space-y-3">
+      <p className="text-sm font-semibold text-slate-500">{data?.year ?? ""}</p>
+      {months.map((month) => {
+        const total = month.items.filter((item) => item.amount_status !== "missing" && item.amount !== null && item.amount !== undefined).reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+        return (
+          <Card key={month.month} className="overflow-hidden">
+            <MonthHeader label={month.label} totalLabel="Total ingresos" total={total} />
+            {month.items.map((item) => <IncomeRow key={item.id} item={item} />)}
+          </Card>
+        );
+      })}
+      {months.length === 0 && <Card className="p-5 text-sm text-slate-500">No hay ingresos para este año/filtro.</Card>}
+    </section>
+  );
+}
+
+function GroupedExpenseView({ data }: { data?: GroupedFinance<Expense> }) {
+  const months = (data?.months ?? []).filter((month) => month.items.length > 0);
+  return (
+    <section className="space-y-3">
+      <p className="text-sm font-semibold text-slate-500">{data?.year ?? ""}</p>
+      {months.map((month) => (
+        <Card key={month.month} className="overflow-hidden">
+          <MonthHeader label={month.label} totalLabel="Total gastos" total={Number(month.expense_total ?? 0)} />
+          {month.items.map((item) => (
+            <Row key={item.id} title={item.provider ?? labelExpenseCategory(item.category)} subtitle={`${item.description ?? "Gasto"} · ${formatDate(item.expense_date)}`} amount={item.amount} />
+          ))}
+        </Card>
+      ))}
+      {months.length === 0 && <Card className="p-5 text-sm text-slate-500">No hay gastos para este año.</Card>}
+    </section>
+  );
+}
+
+function GroupedDocumentView({
+  data,
+  pending,
+  onRegisterExpense,
+  onRegisterIncome
+}: {
+  data?: GroupedFinance<DocumentItem>;
+  pending: boolean;
+  onRegisterExpense: (documentId: string) => void;
+  onRegisterIncome: (documentId: string) => void;
+}) {
+  const months = (data?.months ?? []).filter((month) => month.items.length > 0);
+  return (
+    <section className="space-y-3">
+      <p className="text-sm font-semibold text-slate-500">{data?.year ?? ""}</p>
+      {months.map((month) => (
+        <Card key={month.month} className="overflow-hidden">
+          <MonthHeader label={month.label} totalLabel="Total documental" total={Number(month.document_total ?? 0)} />
+          {month.items.map((item) => (
+            <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4 last:border-b-0">
+              <div className="min-w-0">
+                <p className="font-semibold">{item.title}</p>
+                <p className="text-sm text-slate-500">{labelDocumentType(item.type)} · {formatDate(item.document_date)} · vence {formatDate(item.expiration_date)} · {labelDocumentStatus(item.status)}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-bold">{formatCurrency(item.amount ?? item.cost)}</p>
+                {!item.linked_expense_id && <Button disabled={pending} onClick={() => onRegisterExpense(item.id)} className="bg-white text-ink hover:bg-slate-50">Registrar gasto</Button>}
+                {!item.linked_income_id && <Button disabled={pending} onClick={() => onRegisterIncome(item.id)} className="bg-white text-meadow hover:bg-slate-50">Registrar ingreso</Button>}
+              </div>
+            </div>
+          ))}
+        </Card>
+      ))}
+      {months.length === 0 && <Card className="p-5 text-sm text-slate-500">No hay documentos para este año.</Card>}
+    </section>
+  );
+}
+
+function MonthHeader({ label, totalLabel, total }: { label: string; totalLabel: string; total: number }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-4">
+      <h3 className="font-bold capitalize">{label}</h3>
+      <p className="text-sm font-semibold text-slate-600">{totalLabel}: <span className="text-ink">{formatCurrency(total)}</span></p>
+    </div>
+  );
+}
+
+function filterIncome(item: Income, filter: string) {
+  if (filter === "manuales") return item.source !== "airbnb";
+  if (filter === "airbnb") return item.source === "airbnb";
+  if (filter === "pending") return item.amount_status === "missing" || item.amount === null || item.amount === undefined;
+  if (filter === "completed") return item.amount_status !== "missing" && item.amount !== null && item.amount !== undefined;
+  return true;
 }
 
 function ReservationsPanel({
@@ -1294,11 +1403,29 @@ function labelDocumentType(value?: string | null) {
     seguro: "Seguro",
     ibi: "IBI",
     comunidad: "Comunidad",
+    certificado: "Certificado",
+    garantia: "Garantia",
+    manual: "Manual",
     mantenimiento: "Mantenimiento",
     reserva: "Reserva",
-    otro: "Otro"
+    otro: "Otro",
+    insurance: "Seguro",
+    contract: "Contrato",
+    certificate: "Certificado",
+    warranty: "Garantia",
+    other: "Otro"
   };
   return labels[String(value ?? "")] ?? "Sin clasificar";
+}
+
+function labelDocumentStatus(value?: string | null) {
+  const labels: Record<string, string> = {
+    pending_review: "Pendiente",
+    reviewed: "Revisado",
+    linked: "Asociado",
+    ignored: "Ignorado"
+  };
+  return labels[String(value ?? "pending_review")] ?? "Pendiente";
 }
 
 function labelMimeType(value?: string | null) {
@@ -1468,6 +1595,8 @@ function MonthlyProfitPanel({ stats }: { stats?: MonthlyProfitStats }) {
             <p className="mt-2 text-lg font-bold">{formatCurrency(item.net_profit)}</p>
             <p className="mt-1 text-xs">Ing. {formatCurrency(item.income_total)}</p>
             <p className="text-xs">Gas. {formatCurrency(item.expense_total)}</p>
+            <p className="text-xs">Ratio {item.expense_ratio === null || item.expense_ratio === undefined ? "-" : `${item.expense_ratio}%`}</p>
+            <p className="text-xs">Pend. {item.pending_income_count ?? 0}</p>
           </div>
         ))}
         {months.length === 0 && <p className="text-sm text-slate-500">Todavia no hay datos mensuales.</p>}
@@ -1550,7 +1679,70 @@ function IncomeForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data: 
 }
 
 function DocumentForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data: Record<string, unknown>) => void }) {
-  return <SimpleForm title="Nuevo documento" pending={pending} fields={["title", "provider", "cost", "expiration_date"]} labels={["Titulo", "Proveedor", "Coste", "Caducidad"]} defaults={{ type: "other" }} onSubmit={onSubmit} />;
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    onSubmit({
+      title: String(form.get("title") ?? ""),
+      type: String(form.get("type") ?? "otro"),
+      subtype: String(form.get("type") ?? "otro"),
+      document_date: String(form.get("document_date") ?? ""),
+      amount: Number(String(form.get("amount") ?? "0").replace(",", ".")) || 0,
+      currency: "EUR",
+      expiration_date: String(form.get("expiration_date") ?? "") || null,
+      provider: String(form.get("provider") ?? ""),
+      notes: String(form.get("notes") ?? ""),
+      status: String(form.get("status") ?? "pending_review"),
+      source: "manual",
+      data_origin: "manual",
+      is_demo: false
+    });
+    event.currentTarget.reset();
+  }
+  return (
+    <Card className="p-5">
+      <h3 className="mb-4 font-bold">Nuevo documento</h3>
+      <form onSubmit={submit} className="grid gap-3">
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Titulo</span>
+          <input name="title" required className="h-10 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Tipo</span>
+          <select name="type" className="h-10 w-full rounded-md border border-slate-300 px-3">
+            {["factura","contrato","seguro","ibi","comunidad","certificado","garantia","manual","reserva","otro"].map((item) => <option key={item} value={item}>{labelDocumentType(item)}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Fecha documento</span>
+          <input name="document_date" type="date" required className="h-10 w-full rounded-md border border-slate-300 px-3" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Importe documental</span>
+          <input name="amount" type="number" min="0" step="0.01" className="h-10 w-full rounded-md border border-slate-300 px-3" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Vencimiento</span>
+          <input name="expiration_date" type="date" className="h-10 w-full rounded-md border border-slate-300 px-3" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Proveedor</span>
+          <input name="provider" className="h-10 w-full rounded-md border border-slate-300 px-3" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Estado</span>
+          <select name="status" className="h-10 w-full rounded-md border border-slate-300 px-3">
+            {["pending_review","reviewed","linked","ignored"].map((item) => <option key={item} value={item}>{labelDocumentStatus(item)}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Notas</span>
+          <textarea name="notes" rows={3} className="w-full rounded-md border border-slate-300 px-3 py-2" />
+        </label>
+        <Button disabled={pending} className="bg-ink">Guardar documento</Button>
+      </form>
+    </Card>
+  );
 }
 
 function SimpleForm({ title, fields, labels, defaults, pending, onSubmit }: { title: string; fields: string[]; labels: string[]; defaults: Record<string, unknown>; pending: boolean; onSubmit: (data: Record<string, unknown>) => void }) {
