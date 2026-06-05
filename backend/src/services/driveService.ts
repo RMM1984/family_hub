@@ -4,6 +4,8 @@ import { decryptSecret, encryptSecret } from "../utils/crypto.js";
 import { validateProperty } from "./crudService.js";
 
 const documentTypes = new Set(["factura", "contrato", "seguro", "ibi", "comunidad", "mantenimiento", "reserva", "otro"]);
+const folderTypes = new Set(["facturas", "documentos", "contratos", "seguros", "ibi", "comunidad", "mantenimiento", "reservas", "otros"]);
+const reviewStatuses = new Set(["pending_review", "reviewed", "linked", "ignored"]);
 
 type DriveFile = {
   id: string;
@@ -19,9 +21,11 @@ type DriveFile = {
 export async function getDriveState(schemaName: string, propertyId: string) {
   await validateProperty(schemaName, propertyId);
   const integration = await query("select id, property_id, provider, folder_id, folder_name, folder_url, connected_at, last_sync_at, is_active from property_drive_integrations where property_id = $1 and provider = 'google_drive' and is_active = true", [propertyId], schemaName);
+  const folders = await listFolders(schemaName, propertyId);
   const files = await listFiles(schemaName, propertyId);
   return {
     integration: integration.rows[0] ?? null,
+    folders,
     files,
     google_configured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI),
     scope: env.GOOGLE_DRIVE_SCOPE
@@ -63,6 +67,8 @@ export async function connectFolder(schemaName: string, propertyId: string, user
   const folder = accessToken ? await fetchDriveFolder(accessToken, folderId) : null;
   const folderName = String(input.folder_name ?? folder?.name ?? "Carpeta Drive");
   const folderUrl = String(input.folder_url ?? folder?.webViewLink ?? `https://drive.google.com/drive/folders/${folderId}`);
+  const folderType = normalizeFolderType(input.folder_type, folderName);
+  const providerHint = normalizeProviderHint(input.provider_hint, folderName);
   const result = await query(
     `insert into property_drive_integrations
       (property_id, folder_id, folder_name, folder_url, connected_by, encrypted_access_token, encrypted_refresh_token, token_expires_at, is_active)
@@ -81,15 +87,62 @@ export async function connectFolder(schemaName: string, propertyId: string, user
     [propertyId, folderId, folderName, folderUrl, userId, accessToken ? encryptSecret(accessToken) : null, refreshToken ? encryptSecret(refreshToken) : null, expiresAt],
     schemaName
   );
-  return result.rows[0];
+  const connection = result.rows[0];
+  const mapping = await upsertFolderMapping(schemaName, propertyId, {
+    connection_id: connection.id,
+    drive_folder_id: folderId,
+    drive_folder_name: folderName,
+    drive_folder_url: folderUrl,
+    folder_type: folderType,
+    provider_hint: providerHint,
+    sync_enabled: input.sync_enabled
+  });
+  return { ...connection, folder_mapping: mapping };
 }
 
 export async function syncFolder(schemaName: string, propertyId: string) {
   await validateProperty(schemaName, propertyId);
-  const integration = await getIntegrationWithTokens(schemaName, propertyId);
-  if (!integration) {
-    const err = new Error("La vivienda no tiene carpeta Drive conectada") as Error & { status: number };
+  const folders = await listFolders(schemaName, propertyId);
+  const first = folders.find((folder: any) => folder.sync_enabled) as any;
+  if (!first) {
+    const err = new Error("La vivienda no tiene carpetas Drive activas") as Error & { status: number };
     err.status = 404;
+    throw err;
+  }
+  return syncFolderMapping(schemaName, propertyId, first.id);
+}
+
+export async function syncAll(schemaName: string, propertyId: string) {
+  await validateProperty(schemaName, propertyId);
+  const folders = await listFolders(schemaName, propertyId);
+  let imported = 0;
+  for (const folder of folders as any[]) {
+    if (!folder.sync_enabled) continue;
+    const result = await syncFolderMapping(schemaName, propertyId, folder.id);
+    imported += result.imported;
+  }
+  return { imported, files: await listFiles(schemaName, propertyId), folders: await listFolders(schemaName, propertyId) };
+}
+
+export async function syncFolderMapping(schemaName: string, propertyId: string, folderMappingId: string) {
+  await validateProperty(schemaName, propertyId);
+  const mapping = await getFolder(schemaName, propertyId, folderMappingId);
+  if (!mapping) {
+    const err = new Error("La carpeta Drive no pertenece a esta vivienda") as Error & { status: number };
+    err.status = 404;
+    throw err;
+  }
+  if (!mapping.sync_enabled) {
+    const err = new Error("La sincronizacion de esta carpeta esta desactivada") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const integration = mapping.connection_id
+    ? await getIntegrationById(schemaName, mapping.connection_id)
+    : await getIntegrationWithTokens(schemaName, propertyId);
+  if (!integration) {
+    const err = new Error("Falta conectar la cuenta Google Drive para sincronizar") as Error & { status: number };
+    err.status = 400;
     throw err;
   }
   const token = decryptSecret(integration.encrypted_access_token) ?? await refreshAccessToken(integration, schemaName);
@@ -98,13 +151,15 @@ export async function syncFolder(schemaName: string, propertyId: string) {
     err.status = 400;
     throw err;
   }
-  const files = await fetchDriveFiles(token, integration.folder_id);
+  const files = await fetchDriveFiles(token, mapping.drive_folder_id);
   for (const file of files) {
     await query(
       `insert into drive_files
-        (property_id, drive_folder_id, drive_file_id, name, mime_type, size, web_view_link, web_content_link, created_time, modified_time, synced_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+        (property_id, drive_folder_mapping_id, drive_folder_id, drive_file_id, name, mime_type, size, web_view_link, web_content_link, created_time, modified_time, folder_type, provider_hint, source_folder_name, source_synced_at, synced_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),now())
        on conflict (property_id, drive_file_id) do update set
+        drive_folder_mapping_id = excluded.drive_folder_mapping_id,
+        drive_folder_id = excluded.drive_folder_id,
         name = excluded.name,
         mime_type = excluded.mime_type,
         size = excluded.size,
@@ -112,25 +167,45 @@ export async function syncFolder(schemaName: string, propertyId: string) {
         web_content_link = excluded.web_content_link,
         created_time = excluded.created_time,
         modified_time = excluded.modified_time,
+        folder_type = excluded.folder_type,
+        provider_hint = excluded.provider_hint,
+        source_folder_name = excluded.source_folder_name,
+        source_synced_at = now(),
         synced_at = now()`,
-      [propertyId, integration.folder_id, file.id, file.name, file.mimeType ?? null, file.size ? Number(file.size) : null, file.webViewLink ?? null, file.webContentLink ?? null, file.createdTime ?? null, file.modifiedTime ?? null],
+      [propertyId, mapping.id, mapping.drive_folder_id, file.id, file.name, file.mimeType ?? null, file.size ? Number(file.size) : null, file.webViewLink ?? null, file.webContentLink ?? null, file.createdTime ?? null, file.modifiedTime ?? null, mapping.folder_type, mapping.provider_hint ?? null, mapping.drive_folder_name],
       schemaName
     );
   }
+  await query("update property_drive_folders set last_sync_at = now() where id = $1", [mapping.id], schemaName);
   await query("update property_drive_integrations set last_sync_at = now() where id = $1", [integration.id], schemaName);
-  return { imported: files.length, files: await listFiles(schemaName, propertyId) };
+  return { imported: files.length, folder: { ...mapping, last_sync_at: new Date().toISOString() }, files: await listFiles(schemaName, propertyId) };
 }
 
-export async function listFiles(schemaName: string, propertyId: string) {
+export async function listFiles(schemaName: string, propertyId: string, filters: Record<string, string | undefined> = {}) {
   await validateProperty(schemaName, propertyId);
+  const clauses = ["df.property_id = $1"];
+  const params: unknown[] = [propertyId];
+  const allowed: Record<string, string> = {
+    folder_id: "df.drive_folder_mapping_id",
+    folder_type: "df.folder_type",
+    provider_hint: "df.provider_hint",
+    review_status: "df.review_status"
+  };
+  for (const [key, column] of Object.entries(allowed)) {
+    if (!filters[key]) continue;
+    params.push(filters[key]);
+    clauses.push(`${column} = $${params.length}`);
+  }
+  if (filters.unlinked === "true") clauses.push("df.linked_expense_id is null and df.linked_document_id is null and df.linked_income_id is null");
   const result = await query(
-    `select df.*, e.description as linked_expense_description, d.title as linked_document_title
+    `select df.*, p.alias as property_alias, e.description as linked_expense_description, d.title as linked_document_title
      from drive_files df
+     join properties p on p.id = df.property_id
      left join expenses e on e.id = df.linked_expense_id and e.property_id = df.property_id
      left join documents d on d.id = df.linked_document_id and d.property_id = df.property_id
-     where df.property_id = $1
-     order by df.modified_time desc nulls last, df.synced_at desc`,
-    [propertyId],
+     where ${clauses.join(" and ")}
+     order by df.modified_time desc nulls last, df.source_synced_at desc, df.synced_at desc`,
+    params,
     schemaName
   );
   return result.rows;
@@ -143,14 +218,22 @@ export async function updateFile(schemaName: string, propertyId: string, fileId:
     err.status = 400;
     throw err;
   }
+  if (input.review_status !== undefined && input.review_status !== null && !reviewStatuses.has(String(input.review_status))) {
+    const err = new Error("Estado de revision no permitido") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
   const result = await query(
     `update drive_files
      set document_type = coalesce($1, document_type),
          expiration_date = $2,
          linked_expense_id = coalesce($3, linked_expense_id),
          linked_income_id = coalesce($4, linked_income_id),
-         linked_document_id = coalesce($5, linked_document_id)
-     where property_id = $6 and id = $7
+         linked_document_id = coalesce($5, linked_document_id),
+         review_status = coalesce($6, review_status),
+         provider_hint = coalesce($7, provider_hint),
+         folder_type = coalesce($8, folder_type)
+     where property_id = $9 and id = $10
      returning *`,
     [
       input.document_type === "" ? null : input.document_type ?? null,
@@ -158,6 +241,9 @@ export async function updateFile(schemaName: string, propertyId: string, fileId:
       input.linked_expense_id ?? null,
       input.linked_income_id ?? null,
       input.linked_document_id ?? null,
+      input.review_status ?? null,
+      input.provider_hint === "" ? null : input.provider_hint ?? null,
+      input.folder_type === "" ? null : input.folder_type ?? null,
       propertyId,
       fileId
     ],
@@ -178,7 +264,7 @@ export async function linkExpense(schemaName: string, propertyId: string, fileId
     err.status = 404;
     throw err;
   }
-  return updateFile(schemaName, propertyId, fileId, { linked_expense_id: expenseId });
+  return updateFile(schemaName, propertyId, fileId, { linked_expense_id: expenseId, review_status: "linked" });
 }
 
 export async function linkDocument(schemaName: string, propertyId: string, fileId: string, documentId: string) {
@@ -188,13 +274,129 @@ export async function linkDocument(schemaName: string, propertyId: string, fileI
     err.status = 404;
     throw err;
   }
-  return updateFile(schemaName, propertyId, fileId, { linked_document_id: documentId });
+  return updateFile(schemaName, propertyId, fileId, { linked_document_id: documentId, review_status: "linked" });
 }
 
 export async function disconnect(schemaName: string, propertyId: string) {
   await validateProperty(schemaName, propertyId);
   await query("update property_drive_integrations set is_active = false where property_id = $1 and provider = 'google_drive'", [propertyId], schemaName);
   return { message: "Drive desconectado" };
+}
+
+export async function listFolders(schemaName: string, propertyId: string) {
+  await validateProperty(schemaName, propertyId);
+  const result = await query(
+    `select pdf.*, count(df.id)::int as file_count
+     from property_drive_folders pdf
+     left join drive_files df on df.drive_folder_mapping_id = pdf.id
+     where pdf.property_id = $1
+     group by pdf.id
+     order by pdf.connected_at desc`,
+    [propertyId],
+    schemaName
+  );
+  return result.rows;
+}
+
+export async function createFolder(schemaName: string, propertyId: string, input: Record<string, unknown>) {
+  await validateProperty(schemaName, propertyId);
+  const folderId = parseFolderId(String(input.drive_folder_id ?? input.folder_id ?? input.folder_url ?? ""));
+  if (!folderId) {
+    const err = new Error("Debes indicar una carpeta de Google Drive valida") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const folderName = String(input.drive_folder_name ?? input.folder_name ?? "Carpeta Drive");
+  return upsertFolderMapping(schemaName, propertyId, {
+    connection_id: input.connection_id ?? null,
+    drive_folder_id: folderId,
+    drive_folder_name: folderName,
+    drive_folder_url: input.drive_folder_url ?? input.folder_url ?? `https://drive.google.com/drive/folders/${folderId}`,
+    folder_type: normalizeFolderType(input.folder_type, folderName),
+    provider_hint: normalizeProviderHint(input.provider_hint, folderName),
+    sync_enabled: input.sync_enabled
+  });
+}
+
+export async function updateFolder(schemaName: string, propertyId: string, folderMappingId: string, input: Record<string, unknown>) {
+  await validateProperty(schemaName, propertyId);
+  const folderType = input.folder_type === undefined ? null : normalizeFolderType(input.folder_type, "");
+  const result = await query(
+    `update property_drive_folders
+     set drive_folder_name = coalesce($1, drive_folder_name),
+         drive_folder_url = coalesce($2, drive_folder_url),
+         folder_type = coalesce($3, folder_type),
+         provider_hint = $4,
+         sync_enabled = coalesce($5, sync_enabled),
+         metadata = coalesce($6, metadata)
+     where property_id = $7 and id = $8
+     returning *`,
+    [
+      input.drive_folder_name ?? input.folder_name ?? null,
+      input.drive_folder_url ?? input.folder_url ?? null,
+      folderType,
+      input.provider_hint === undefined ? null : input.provider_hint,
+      input.sync_enabled ?? null,
+      input.metadata ?? null,
+      propertyId,
+      folderMappingId
+    ],
+    schemaName
+  );
+  if (!result.rows[0]) {
+    const err = new Error("Carpeta Drive no encontrada en esta vivienda") as Error & { status: number };
+    err.status = 404;
+    throw err;
+  }
+  await query("update drive_files set folder_type = $1, provider_hint = $2, source_folder_name = $3 where property_id = $4 and drive_folder_mapping_id = $5", [result.rows[0].folder_type, result.rows[0].provider_hint, result.rows[0].drive_folder_name, propertyId, folderMappingId], schemaName);
+  return result.rows[0];
+}
+
+export async function deleteFolder(schemaName: string, propertyId: string, folderMappingId: string) {
+  await validateProperty(schemaName, propertyId);
+  await query("update drive_files set drive_folder_mapping_id = null where property_id = $1 and drive_folder_mapping_id = $2", [propertyId, folderMappingId], schemaName);
+  const result = await query("delete from property_drive_folders where property_id = $1 and id = $2 returning id", [propertyId, folderMappingId], schemaName);
+  if (!result.rows[0]) {
+    const err = new Error("Carpeta Drive no encontrada en esta vivienda") as Error & { status: number };
+    err.status = 404;
+    throw err;
+  }
+  return { message: "Vinculo de carpeta eliminado" };
+}
+
+export async function listConnections(schemaName: string) {
+  const result = await query(
+    `select pdi.id, pdi.provider, pdi.connected_at, pdi.last_sync_at, pdi.is_active,
+            count(pdf.id)::int as folder_count
+     from property_drive_integrations pdi
+     left join property_drive_folders pdf on pdf.connection_id = pdi.id
+     where pdi.provider = 'google_drive'
+     group by pdi.id
+     order by pdi.connected_at desc`,
+    [],
+    schemaName
+  );
+  return {
+    google_drive: {
+      configured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI),
+      scope: env.GOOGLE_DRIVE_SCOPE,
+      connections: result.rows
+    }
+  };
+}
+
+export async function listGoogleDriveFolders(schemaName: string) {
+  const result = await query(
+    `select pdf.*, p.alias as property_alias, p.address as property_address, count(df.id)::int as file_count
+     from property_drive_folders pdf
+     join properties p on p.id = pdf.property_id
+     left join drive_files df on df.drive_folder_mapping_id = pdf.id
+     group by pdf.id, p.id
+     order by pdf.connected_at desc`,
+    [],
+    schemaName
+  );
+  return result.rows;
 }
 
 function ensureGoogleConfig() {
@@ -254,6 +456,69 @@ async function refreshAccessToken(integration: any, schemaName: string) {
 async function getIntegrationWithTokens(schemaName: string, propertyId: string) {
   const result = await query("select * from property_drive_integrations where property_id = $1 and provider = 'google_drive' and is_active = true", [propertyId], schemaName);
   return result.rows[0] ?? null;
+}
+
+async function getIntegrationById(schemaName: string, integrationId: string) {
+  const result = await query("select * from property_drive_integrations where id = $1 and provider = 'google_drive' and is_active = true", [integrationId], schemaName);
+  return result.rows[0] ?? null;
+}
+
+async function getFolder(schemaName: string, propertyId: string, folderMappingId: string) {
+  const result = await query("select * from property_drive_folders where property_id = $1 and id = $2", [propertyId, folderMappingId], schemaName);
+  return result.rows[0] ?? null;
+}
+
+async function upsertFolderMapping(schemaName: string, propertyId: string, input: Record<string, unknown>) {
+  const result = await query(
+    `insert into property_drive_folders
+      (property_id, connection_id, drive_folder_id, drive_folder_name, drive_folder_url, folder_type, provider_hint, sync_enabled)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (property_id, drive_folder_id) do update set
+       connection_id = coalesce(excluded.connection_id, property_drive_folders.connection_id),
+       drive_folder_name = excluded.drive_folder_name,
+       drive_folder_url = excluded.drive_folder_url,
+       folder_type = excluded.folder_type,
+       provider_hint = excluded.provider_hint,
+       sync_enabled = excluded.sync_enabled
+     returning *`,
+    [
+      propertyId,
+      input.connection_id ?? null,
+      input.drive_folder_id,
+      input.drive_folder_name,
+      input.drive_folder_url ?? null,
+      input.folder_type,
+      input.provider_hint ?? null,
+      input.sync_enabled === undefined ? true : Boolean(input.sync_enabled)
+    ],
+    schemaName
+  );
+  return result.rows[0];
+}
+
+function normalizeFolderType(value: unknown, folderName: string) {
+  const raw = String(value ?? "").toLowerCase().trim();
+  if (folderTypes.has(raw)) return raw;
+  const name = folderName.toLowerCase();
+  if (name.includes("factura") || name.includes("iberdrola") || name.includes("simyo") || name.includes("movistar") || name.includes("pepephone")) return "facturas";
+  if (name.includes("contrato")) return "contratos";
+  if (name.includes("seguro")) return "seguros";
+  if (name.includes("ibi")) return "ibi";
+  if (name.includes("comunidad")) return "comunidad";
+  if (name.includes("mantenimiento")) return "mantenimiento";
+  if (name.includes("reserva") || name.includes("airbnb")) return "reservas";
+  if (name.includes("document")) return "documentos";
+  return "otros";
+}
+
+function normalizeProviderHint(value: unknown, folderName: string) {
+  const raw = String(value ?? "").toLowerCase().trim();
+  if (raw) return raw;
+  const name = folderName.toLowerCase();
+  for (const provider of ["iberdrola", "movistar", "pepephone", "simyo", "airbnb", "comunidad", "seguro"]) {
+    if (name.includes(provider)) return provider;
+  }
+  return null;
 }
 
 async function fetchDriveFolder(accessToken: string, folderId: string) {

@@ -64,6 +64,7 @@ export const mockDocuments: DocumentItem[] = [
 
 export const mockDriveState: DriveState = {
   integration: null,
+  folders: [],
   files: [],
   google_configured: false,
   scope: "https://www.googleapis.com/auth/drive.metadata.readonly"

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, Building2, FileText, Home, LogOut, Menu, Receipt, Settings, Wallet } from "lucide-react";
+import { BarChart3, Building2, Cloud, FileText, Home, LogOut, Menu, Receipt, Settings, Wallet } from "lucide-react";
 import { ReactNode, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ const items = [
   { href: "/expenses", label: "Gastos", icon: Receipt },
   { href: "/income", label: "Ingresos", icon: Wallet },
   { href: "/documents", label: "Documentos", icon: FileText },
+  { href: "/connections", label: "Conexiones", icon: Cloud },
   { href: "/settings", label: "Ajustes", icon: Settings }
 ];
 

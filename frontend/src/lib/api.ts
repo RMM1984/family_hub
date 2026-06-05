@@ -42,6 +42,13 @@ export const createPropertyDocument = (id: string, data: Record<string, unknown>
 export const getPropertyDrive = (id: string) => withFallback(() => api.get(`/properties/${id}/drive`).then((r) => r.data.data), mockDriveState);
 export const connectPropertyDrive = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/drive/connect`, data).then((r) => r.data.data);
 export const syncPropertyDrive = (id: string) => api.post(`/properties/${id}/drive/sync`).then((r) => r.data.data);
+export const syncAllPropertyDrive = (id: string) => api.post(`/properties/${id}/drive/sync-all`).then((r) => r.data.data);
+export const createDriveFolder = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/drive/folders`, data).then((r) => r.data.data);
+export const updateDriveFolder = (propertyId: string, folderId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/drive/folders/${folderId}`, data).then((r) => r.data.data);
+export const deleteDriveFolder = (propertyId: string, folderId: string) => api.delete(`/properties/${propertyId}/drive/folders/${folderId}`).then((r) => r.data.data);
+export const syncDriveFolder = (propertyId: string, folderId: string) => api.post(`/properties/${propertyId}/drive/folders/${folderId}/sync`).then((r) => r.data.data);
 export const updateDriveFile = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/drive/files/${fileId}`, data).then((r) => r.data.data);
 export const linkDriveFileExpense = (propertyId: string, fileId: string, expenseId: string) => api.post(`/properties/${propertyId}/drive/files/${fileId}/link-expense`, { expense_id: expenseId }).then((r) => r.data.data);
 export const linkDriveFileDocument = (propertyId: string, fileId: string, documentId: string) => api.post(`/properties/${propertyId}/drive/files/${fileId}/link-document`, { document_id: documentId }).then((r) => r.data.data);
+export const getConnections = () => withFallback(() => api.get("/connections").then((r) => r.data.data), { google_drive: { configured: false, scope: "", connections: [] } });
+export const getGoogleDriveFolders = () => withFallback(() => api.get("/connections/google-drive/folders").then((r) => r.data.data), []);

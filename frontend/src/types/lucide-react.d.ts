@@ -9,6 +9,7 @@ declare module "lucide-react" {
   export const Building2: LucideIcon;
   export const CalendarClock: LucideIcon;
   export const CalendarSync: LucideIcon;
+  export const Cloud: LucideIcon;
   export const Euro: LucideIcon;
   export const ExternalLink: LucideIcon;
   export const FileText: LucideIcon;

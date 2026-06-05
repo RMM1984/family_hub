@@ -22,8 +22,32 @@ driveRouter.post("/sync", requireRole("admin"), async (req: AuthedRequest, res: 
   res.json({ data: await drive.syncFolder(req.schemaName!, String(req.params.propertyId)) });
 });
 
+driveRouter.post("/sync-all", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.syncAll(req.schemaName!, String(req.params.propertyId)) });
+});
+
+driveRouter.get("/folders", async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.listFolders(req.schemaName!, String(req.params.propertyId)) });
+});
+
+driveRouter.post("/folders", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.status(201).json({ data: await drive.createFolder(req.schemaName!, String(req.params.propertyId), req.body) });
+});
+
+driveRouter.patch("/folders/:folderMappingId", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.updateFolder(req.schemaName!, String(req.params.propertyId), String(req.params.folderMappingId), req.body) });
+});
+
+driveRouter.delete("/folders/:folderMappingId", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.deleteFolder(req.schemaName!, String(req.params.propertyId), String(req.params.folderMappingId)) });
+});
+
+driveRouter.post("/folders/:folderMappingId/sync", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.syncFolderMapping(req.schemaName!, String(req.params.propertyId), String(req.params.folderMappingId)) });
+});
+
 driveRouter.get("/files", async (req: AuthedRequest, res: Response) => {
-  res.json({ data: await drive.listFiles(req.schemaName!, String(req.params.propertyId)) });
+  res.json({ data: await drive.listFiles(req.schemaName!, String(req.params.propertyId), req.query as Record<string, string | undefined>) });
 });
 
 driveRouter.patch("/files/:fileId", requireRole("admin"), async (req: AuthedRequest, res: Response) => {

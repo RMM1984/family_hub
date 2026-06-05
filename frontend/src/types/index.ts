@@ -85,10 +85,28 @@ export interface DriveIntegration {
   is_active: boolean;
 }
 
+export interface DriveFolderMapping {
+  id: string;
+  property_id: string;
+  connection_id?: string | null;
+  drive_folder_id: string;
+  drive_folder_name: string;
+  drive_folder_url?: string;
+  folder_type: string;
+  provider_hint?: string | null;
+  sync_enabled: boolean;
+  connected_at?: string;
+  last_sync_at?: string;
+  file_count?: number;
+  property_alias?: string;
+  property_address?: string;
+}
+
 export interface DriveFile {
   id: string;
   property_id: string;
   drive_folder_id: string;
+  drive_folder_mapping_id?: string | null;
   drive_file_id: string;
   name: string;
   mime_type?: string;
@@ -98,15 +116,24 @@ export interface DriveFile {
   created_time?: string;
   modified_time?: string;
   document_type?: string;
+  folder_type?: string;
+  provider_hint?: string;
+  review_status?: "pending_review" | "reviewed" | "linked" | "ignored";
+  source_provider?: string;
+  source_method?: string;
+  source_folder_name?: string;
+  source_synced_at?: string;
   linked_expense_id?: string;
   linked_document_id?: string;
   linked_expense_description?: string;
   linked_document_title?: string;
+  property_alias?: string;
   expiration_date?: string;
 }
 
 export interface DriveState {
   integration: DriveIntegration | null;
+  folders: DriveFolderMapping[];
   files: DriveFile[];
   google_configured: boolean;
   scope: string;
