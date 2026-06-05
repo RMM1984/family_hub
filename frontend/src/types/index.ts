@@ -65,12 +65,25 @@ export interface Reservation {
   check_in: string;
   check_out: string;
   nights?: number;
-  status: string;
+  status: "confirmed" | "cancelled" | "blocked" | "removed_from_calendar";
   imported_from_ical: boolean;
   synced_at?: string;
   income_id?: string | null;
   income_amount?: number | null;
   income_amount_status?: "missing" | "manual" | "estimated" | "confirmed" | null;
+  property_alias?: string;
+}
+
+export interface AirbnbStats {
+  reservations_total: number;
+  upcoming_reservations: number;
+  next_check_in?: string | null;
+  next_check_out?: string | null;
+  booked_nights_current_month: number;
+  booked_nights_next_30_days: number;
+  occupancy_current_month: number;
+  occupancy_next_30_days: number;
+  incomes_missing_amount: number;
 }
 
 export interface DocumentItem {
@@ -185,6 +198,8 @@ export interface DashboardSummary {
   };
   properties: Property[];
   alerts: DocumentItem[];
+  upcoming_reservations?: Reservation[];
+  incomes_missing_amount?: Reservation[];
   latest_movements?: Movement[];
   series: Array<{ label: string; ingresos: number; gastos: number }>;
 }

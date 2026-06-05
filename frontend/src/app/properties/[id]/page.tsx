@@ -15,6 +15,7 @@ import {
   createReservationIncome,
   deleteDriveFolder,
   getAvailableDriveFolders,
+  getPropertyAirbnbStats,
   getProperty,
   getPropertyDocuments,
   getPropertyDrive,
@@ -35,7 +36,7 @@ import {
   updatePropertyReservation
 } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/format";
-import type { AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property, Reservation } from "@/types";
+import type { AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property, Reservation } from "@/types";
 
 type Tab = "Resumen" | "Reservas" | "Contrato / Renta" | "Ingresos" | "Gastos" | "Documentos / Drive" | "Estadisticas";
 
@@ -46,8 +47,11 @@ export default function PropertyDetailPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "Drive" ? "Documentos / Drive" : "Resumen");
   const { data: property } = useQuery<Property>({ queryKey: ["property", propertyId], queryFn: () => getProperty(propertyId) });
+  const operationType = property?.operation_type ?? property?.rental_type ?? (property?.type === "airbnb" ? "tourist" : property?.type ?? "mixed");
+  const showAirbnb = operationType === "tourist" || operationType === "mixed" || Boolean(property?.airbnb_enabled);
   const { data: income = [] } = useQuery<Income[]>({ queryKey: ["property-income", propertyId], queryFn: () => getPropertyIncome(propertyId) });
   const { data: reservations = [] } = useQuery<Reservation[]>({ queryKey: ["property-reservations", propertyId], queryFn: () => getPropertyReservations(propertyId) });
+  const { data: airbnbStats } = useQuery<AirbnbStats>({ queryKey: ["property-airbnb-stats", propertyId], queryFn: () => getPropertyAirbnbStats(propertyId), enabled: showAirbnb });
   const { data: expenses = [] } = useQuery<Expense[]>({ queryKey: ["property-expenses", propertyId], queryFn: () => getPropertyExpenses(propertyId) });
   const { data: documents = [] } = useQuery<DocumentItem[]>({ queryKey: ["property-documents", propertyId], queryFn: () => getPropertyDocuments(propertyId) });
   const { data: drive } = useQuery<DriveState>({ queryKey: ["property-drive", propertyId], queryFn: () => getPropertyDrive(propertyId) });
@@ -61,8 +65,6 @@ export default function PropertyDetailPage() {
     const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
     return { totalIncome, totalExpenses, profit: totalIncome - totalExpenses };
   }, [income, expenses]);
-  const operationType = property?.operation_type ?? property?.rental_type ?? (property?.type === "airbnb" ? "tourist" : property?.type ?? "mixed");
-  const showAirbnb = operationType === "tourist" || operationType === "mixed" || Boolean(property?.airbnb_enabled);
   const tabs: Tab[] = showAirbnb
     ? ["Resumen", "Reservas", "Ingresos", "Gastos", "Documentos / Drive", "Estadisticas"]
     : ["Resumen", "Contrato / Renta", "Ingresos", "Gastos", "Documentos / Drive", "Estadisticas"];
@@ -70,6 +72,7 @@ export default function PropertyDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["property", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-income", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-reservations", propertyId] });
+    queryClient.invalidateQueries({ queryKey: ["property-airbnb-stats", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-expenses", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-documents", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["properties"] });
@@ -141,6 +144,7 @@ export default function PropertyDetailPage() {
         <ReservationsPanel
           property={property}
           reservations={reservations}
+          stats={airbnbStats}
           pendingSave={airbnbIcalMutation.isPending}
           pendingSync={airbnbSyncMutation.isPending}
           pendingIncome={reservationIncomeMutation.isPending}
@@ -234,7 +238,6 @@ export default function PropertyDetailPage() {
     </div>
   );
 }
-
 function DrivePanel({
   drive,
   availableDriveFolders,
@@ -376,6 +379,7 @@ function OperationTypeControl({ value, airbnbEnabled, pending, onChange }: { val
 function ReservationsPanel({
   property,
   reservations,
+  stats,
   pendingSave,
   pendingSync,
   pendingIncome,
@@ -386,6 +390,7 @@ function ReservationsPanel({
 }: {
   property: Property;
   reservations: Reservation[];
+  stats?: AirbnbStats;
   pendingSave: boolean;
   pendingSync: boolean;
   pendingIncome: boolean;
@@ -394,22 +399,26 @@ function ReservationsPanel({
   onCreateIncome: (reservationId: string, data: Record<string, unknown>) => void;
   onUpdateReservation: (reservationId: string, data: Record<string, unknown>) => void;
 }) {
+  const [monthCursor, setMonthCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   function submitIcal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     onSaveIcal({ airbnb_ical_url: String(form.get("airbnb_ical_url") ?? "") });
   }
-  const upcoming = reservations.filter((reservation) => new Date(reservation.check_out) >= new Date()).slice(0, 3);
   return (
     <section className="space-y-5">
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h3 className="text-lg font-bold">Reservas Airbnb</h3>
-            <p className="text-sm text-slate-500">{property.airbnb_enabled ? "Airbnb conectado para esta vivienda" : "Airbnb no conectado en esta vivienda"}</p>
-            <p className="mt-1 text-xs text-slate-500">Ultima sincronizacion: {formatDate(property.airbnb_last_sync_at)}</p>
+            <h3 className="text-lg font-bold">Reservas</h3>
+            <p className="text-sm text-slate-500">Fuente: Airbnb iCal</p>
+            <p className="mt-2 text-sm text-slate-500">Airbnb iCal sincroniza fechas de reservas, pero el importe debe completarse manualmente.</p>
+            <p className={`mt-3 inline-flex rounded-md px-3 py-1 text-sm font-semibold ${property.airbnb_ical_url ? "bg-emerald-50 text-meadow" : "bg-slate-100 text-slate-600"}`}>
+              {property.airbnb_ical_url ? "URL iCal guardada" : "Airbnb no conectado"}
+            </p>
+            <p className="mt-2 text-xs text-slate-500">Ultima sincronizacion: {formatDate(property.airbnb_last_sync_at)}</p>
           </div>
-          <Button disabled={!property.airbnb_ical_url || pendingSync} onClick={onSync} className="bg-meadow hover:bg-green-700">Sincronizar reservas</Button>
+          <Button disabled={!property.airbnb_ical_url || pendingSync} onClick={onSync} className="bg-meadow hover:bg-green-700">Sincronizar ahora</Button>
         </div>
         <form onSubmit={submitIcal} className="mt-5 grid gap-3 lg:grid-cols-[1fr_160px]">
           <input name="airbnb_ical_url" defaultValue={property.airbnb_ical_url ?? ""} required placeholder="URL iCal de Airbnb" className="h-10 rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
@@ -417,17 +426,15 @@ function ReservationsPanel({
         </form>
       </Card>
 
-      {upcoming.length > 0 && (
-        <section className="grid gap-3 md:grid-cols-3">
-          {upcoming.map((reservation) => (
-            <Card key={reservation.id} className="p-4">
-              <p className="font-bold">{reservation.guest_name ?? reservation.title ?? "Reserva"}</p>
-              <p className="mt-1 text-sm text-slate-500">{formatDate(reservation.check_in)} - {formatDate(reservation.check_out)}</p>
-              <p className="mt-2 text-sm font-semibold text-meadow">{reservation.nights ?? "-"} noches</p>
-            </Card>
-          ))}
-        </section>
-      )}
+      <section className="grid gap-3 md:grid-cols-5">
+        <Metric title="Proximo check-in" value={formatDate(stats?.next_check_in)} icon={<CalendarClock className="h-5 w-5" />} />
+        <Metric title="Proximo check-out" value={formatDate(stats?.next_check_out)} icon={<CalendarClock className="h-5 w-5" />} />
+        <Metric title="Noches este mes" value={String(stats?.booked_nights_current_month ?? 0)} icon={<CalendarClock className="h-5 w-5" />} />
+        <Metric title="Ocupacion 30 dias" value={`${stats?.occupancy_next_30_days ?? 0}%`} icon={<Wallet className="h-5 w-5" />} />
+        <Metric title="Importes pendientes" value={String(stats?.incomes_missing_amount ?? 0)} icon={<Receipt className="h-5 w-5" />} />
+      </section>
+
+      <ReservationCalendar reservations={reservations} month={monthCursor} onMonthChange={setMonthCursor} />
 
       <div className="grid gap-3">
         {reservations.map((reservation) => (
@@ -444,7 +451,6 @@ function ReservationsPanel({
     </section>
   );
 }
-
 function ReservationCard({ reservation, pending, onCreateIncome, onUpdateReservation }: { reservation: Reservation; pending: boolean; onCreateIncome: (reservationId: string, data: Record<string, unknown>) => void; onUpdateReservation: (reservationId: string, data: Record<string, unknown>) => void }) {
   const [amount, setAmount] = useState(reservation.income_amount?.toString() ?? "");
   const hasIncome = Boolean(reservation.income_id);
@@ -455,16 +461,56 @@ function ReservationCard({ reservation, pending, onCreateIncome, onUpdateReserva
         <div>
           <p className="font-bold">{reservation.guest_name ?? reservation.title ?? "Reserva Airbnb"}</p>
           <p className="text-sm text-slate-500">Check-in: {formatDate(reservation.check_in)} · Check-out: {formatDate(reservation.check_out)} · {reservation.nights ?? "-"} noches</p>
-          <p className="mt-1 text-sm text-slate-500">Estado: {labelReservationStatus(reservation.status)} · Ingreso: {hasIncome ? "creado" : "sin crear"} · Importe: {amountPending ? "pendiente" : formatCurrency(reservation.income_amount)}</p>
+          <p className="mt-1 text-sm text-slate-500">Estado: {labelReservationStatus(reservation.status)} · Ingreso: {hasIncome ? "Ingreso creado" : "sin crear"} · Importe: {amountPending ? labelAmountStatus(reservation.income_amount_status) : `${formatCurrency(reservation.income_amount)} · ${labelAmountStatus(reservation.income_amount_status)}`}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button disabled={pending} onClick={() => onCreateIncome(reservation.id, {})} className="bg-ink">{hasIncome ? "Actualizar ingreso" : "Crear ingreso"}</Button>
+          <Button disabled={pending} onClick={() => onCreateIncome(reservation.id, {})} className="bg-ink">{hasIncome ? "Ingreso creado" : "Crear ingreso"}</Button>
           <Button disabled={pending} onClick={() => onUpdateReservation(reservation.id, { status: "cancelled" })} className="bg-white text-coral hover:bg-slate-50">Cancelar</Button>
         </div>
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-[1fr_180px]">
         <input value={amount} onChange={(event) => setAmount(event.target.value)} type="number" step="0.01" placeholder="Importe manual" className="h-10 rounded-md border border-slate-300 px-3" />
         <Button disabled={pending || !amount} onClick={() => onCreateIncome(reservation.id, { amount, amount_status: "manual" })} className="bg-meadow hover:bg-green-700">Completar importe</Button>
+      </div>
+    </Card>
+  );
+}
+
+function ReservationCalendar({ reservations, month, onMonthChange }: { reservations: Reservation[]; month: Date; onMonthChange: (date: Date) => void }) {
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
+  const startOffset = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const cells = Array.from({ length: startOffset + daysInMonth }, (_, index) => index < startOffset ? null : new Date(month.getFullYear(), month.getMonth(), index - startOffset + 1));
+  const todayKey = dateKey(new Date());
+  const monthLabel = month.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  return (
+    <Card className="p-5">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h3 className="font-bold capitalize">{monthLabel}</h3>
+        <div className="flex gap-2">
+          <Button onClick={() => onMonthChange(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className="bg-white text-ink hover:bg-slate-50">Anterior</Button>
+          <Button onClick={() => onMonthChange(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className="bg-white text-ink hover:bg-slate-50">Siguiente</Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-2 text-center text-xs font-semibold text-slate-500">
+        {["L", "M", "X", "J", "V", "S", "D"].map((day) => <div key={day}>{day}</div>)}
+      </div>
+      <div className="mt-2 grid grid-cols-7 gap-2">
+        {cells.map((day, index) => {
+          if (!day) return <div key={`empty-${index}`} className="aspect-square rounded-md bg-slate-50" />;
+          const key = dateKey(day);
+          const dayReservations = reservations.filter((reservation) => reservationCoversDate(reservation, day));
+          const checkIn = reservations.some((reservation) => dateKey(new Date(reservation.check_in)) === key);
+          const checkOut = reservations.some((reservation) => dateKey(new Date(reservation.check_out)) === key);
+          return (
+            <div key={key} className={`aspect-square rounded-md border p-2 text-xs ${dayReservations.length ? "border-meadow bg-emerald-50 text-ink" : "border-slate-200 bg-white"} ${key === todayKey ? "ring-2 ring-sun" : ""}`}>
+              <p className="font-bold">{day.getDate()}</p>
+              {checkIn && <p className="mt-1 text-[10px] text-meadow">Entrada</p>}
+              {checkOut && <p className="text-[10px] text-coral">Salida</p>}
+              {dayReservations.length > 0 && !checkIn && !checkOut && <p className="mt-1 text-[10px]">Reservado</p>}
+            </div>
+          );
+        })}
       </div>
     </Card>
   );
@@ -713,9 +759,32 @@ function labelReservationStatus(value?: string | null) {
   const labels: Record<string, string> = {
     confirmed: "Confirmada",
     cancelled: "Cancelada",
-    blocked: "Bloqueada"
+    blocked: "Bloqueada",
+    removed_from_calendar: "Ya no aparece en iCal"
   };
   return labels[String(value ?? "confirmed")] ?? "Confirmada";
+}
+
+function labelAmountStatus(value?: string | null) {
+  const labels: Record<string, string> = {
+    missing: "Pendiente importe",
+    manual: "Manual",
+    estimated: "Estimado",
+    confirmed: "Confirmado"
+  };
+  return labels[String(value ?? "missing")] ?? "Pendiente importe";
+}
+
+function dateKey(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+function reservationCoversDate(reservation: Reservation, day: Date) {
+  if (reservation.status === "cancelled" || reservation.status === "removed_from_calendar") return false;
+  const start = new Date(reservation.check_in);
+  const end = new Date(reservation.check_out);
+  const current = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  return current >= new Date(start.getFullYear(), start.getMonth(), start.getDate()) && current < new Date(end.getFullYear(), end.getMonth(), end.getDate());
 }
 
 function Metric({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {

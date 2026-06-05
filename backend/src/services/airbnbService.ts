@@ -3,7 +3,7 @@ import { parseAirbnbIcal } from "../utils/ical-parser.js";
 import { validateProperty } from "./crudService.js";
 
 const operationTypes = new Set(["tourist", "long_term", "own_use", "mixed", "inactive"]);
-const reservationStatuses = new Set(["confirmed", "cancelled", "blocked"]);
+const reservationStatuses = new Set(["confirmed", "cancelled", "blocked", "removed_from_calendar"]);
 const amountStatuses = new Set(["missing", "manual", "estimated", "confirmed"]);
 
 export async function listReservations(schemaName: string, propertyId: string) {
@@ -40,12 +40,8 @@ export async function getCalendar(schemaName: string, propertyId: string) {
 
 export async function saveIcalUrl(schemaName: string, propertyId: string, input: Record<string, unknown>) {
   await validateProperty(schemaName, propertyId);
-  const url = String(input.airbnb_ical_url ?? input.ical_url ?? "").trim();
-  if (!url.startsWith("http")) {
-    const err = new Error("La URL iCal de Airbnb no es valida") as Error & { status: number };
-    err.status = 400;
-    throw err;
-  }
+  const url = validateIcalUrl(input.airbnb_ical_url ?? input.ical_url);
+  await ensureIcalCanBeParsed(url);
   const result = await query(
     `update properties
      set airbnb_ical_url = $1,
@@ -69,9 +65,11 @@ export async function syncAirbnb(schemaName: string, propertyId: string) {
     err.status = 400;
     throw err;
   }
-  const events = await parseAirbnbIcal(row.airbnb_ical_url);
+  const events = await ensureIcalCanBeParsed(row.airbnb_ical_url);
+  const externalIds = events.map((event) => event.uid);
   let imported = 0;
   let updated = 0;
+  let incomesCreated = 0;
   for (const event of events) {
     const result = await query(
       `insert into property_reservations
@@ -83,18 +81,64 @@ export async function syncAirbnb(schemaName: string, propertyId: string) {
         check_in = excluded.check_in,
         check_out = excluded.check_out,
         nights = excluded.nights,
+        status = 'confirmed',
         raw_ical = excluded.raw_ical,
         synced_at = now()
-       returning (xmax = 0) as inserted`,
+       returning id, (xmax = 0) as inserted`,
       [propertyId, event.uid, event.title ?? event.guest_name, event.guest_name, event.check_in, event.check_out, event.nights, JSON.stringify(event)],
       schemaName
     );
     if (result.rows[0]?.inserted) imported += 1;
     else updated += 1;
+    if (await ensureIncomeForReservation(schemaName, propertyId, result.rows[0].id)) {
+      incomesCreated += 1;
+    }
+  }
+  let removed = 0;
+  if (externalIds.length > 0) {
+    const result = await query(
+      `update property_reservations
+       set status = 'removed_from_calendar', synced_at = now()
+       where property_id = $1
+         and source = 'airbnb'
+         and status <> 'removed_from_calendar'
+         and external_id <> all($2::text[])
+       returning id`,
+      [propertyId, externalIds],
+      schemaName
+    );
+    removed = result.rowCount ?? 0;
   }
   await query("update properties set airbnb_last_sync_at = now(), airbnb_enabled = true where id = $1", [propertyId], schemaName);
   await query("insert into ical_sync_log (property_id, reservations_imported) values ($1,$2)", [propertyId, imported], schemaName);
-  return { imported, updated, reservations: await listReservations(schemaName, propertyId) };
+  return { imported, updated, removed, incomes_created: incomesCreated, reservations: await listReservations(schemaName, propertyId), stats: await getStats(schemaName, propertyId) };
+}
+
+export async function getStats(schemaName: string, propertyId: string) {
+  await validateProperty(schemaName, propertyId);
+  const reservations = await listReservations(schemaName, propertyId) as any[];
+  const active = reservations.filter((reservation) => !["cancelled", "removed_from_calendar"].includes(String(reservation.status)));
+  const today = startOfDay(new Date());
+  const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const currentMonthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+  const next30End = addDays(today, 30);
+  const upcoming = active.filter((reservation) => parseDate(reservation.check_in) >= today).sort((a, b) => parseDate(a.check_in).getTime() - parseDate(b.check_in).getTime());
+  const upcomingCheckout = active.filter((reservation) => parseDate(reservation.check_out) >= today).sort((a, b) => parseDate(a.check_out).getTime() - parseDate(b.check_out).getTime());
+  const bookedCurrentMonth = bookedNights(active, currentMonthStart, currentMonthEnd);
+  const bookedNext30 = bookedNights(active, today, next30End);
+  const availableCurrentMonth = daysBetween(currentMonthStart, currentMonthEnd);
+  const availableNext30 = daysBetween(today, next30End);
+  return {
+    reservations_total: reservations.length,
+    upcoming_reservations: upcoming.length,
+    next_check_in: upcoming[0]?.check_in ?? null,
+    next_check_out: upcomingCheckout[0]?.check_out ?? null,
+    booked_nights_current_month: bookedCurrentMonth,
+    booked_nights_next_30_days: bookedNext30,
+    occupancy_current_month: percentage(bookedCurrentMonth, availableCurrentMonth),
+    occupancy_next_30_days: percentage(bookedNext30, availableNext30),
+    incomes_missing_amount: reservations.filter((reservation) => reservation.income_amount_status === "missing" || reservation.income_amount === null || reservation.income_amount === undefined).length
+  };
 }
 
 export async function updateReservation(schemaName: string, propertyId: string, reservationId: string, input: Record<string, unknown>) {
@@ -161,7 +205,7 @@ export async function createIncomeFromReservation(schemaName: string, propertyId
       reservationId,
       amount,
       reservation.check_in,
-      reservation.title ?? "Reserva Airbnb",
+      `Reserva Airbnb: ${reservation.check_in} - ${reservation.check_out}`,
       reservation.guest_name,
       reservation.check_in,
       reservation.check_out,
@@ -172,6 +216,12 @@ export async function createIncomeFromReservation(schemaName: string, propertyId
     schemaName
   );
   return result.rows[0];
+}
+
+async function ensureIncomeForReservation(schemaName: string, propertyId: string, reservationId: string) {
+  const existing = await query("select id from income where property_id = $1 and reservation_id = $2", [propertyId, reservationId], schemaName);
+  await createIncomeFromReservation(schemaName, propertyId, reservationId, {});
+  return !existing.rows[0];
 }
 
 export async function updatePropertyOperation(schemaName: string, propertyId: string, input: Record<string, unknown>) {
@@ -199,4 +249,59 @@ function normalizeAmountStatus(value: unknown, amount: number | null) {
   const raw = String(value ?? "").trim();
   if (raw && amountStatuses.has(raw)) return raw;
   return amount === null ? "missing" : "manual";
+}
+
+function validateIcalUrl(value: unknown) {
+  const raw = String(value ?? "").trim();
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("invalid protocol");
+    return url.toString();
+  } catch {
+    const err = new Error("La URL iCal de Airbnb no es una URL valida") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+}
+
+async function ensureIcalCanBeParsed(url: string) {
+  try {
+    return await parseAirbnbIcal(url);
+  } catch (error) {
+    const err = new Error(`No se pudo leer el calendario iCal de Airbnb: ${String((error as Error).message ?? error)}`) as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+}
+
+function parseDate(value: string | Date) {
+  return startOfDay(new Date(value));
+}
+
+function startOfDay(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+function addDays(value: Date, days: number) {
+  const result = new Date(value);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function daysBetween(start: Date, end: Date) {
+  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
+}
+
+function bookedNights(reservations: any[], periodStart: Date, periodEnd: Date) {
+  return reservations.reduce((sum, reservation) => {
+    const start = parseDate(reservation.check_in);
+    const end = parseDate(reservation.check_out);
+    const overlapStart = start > periodStart ? start : periodStart;
+    const overlapEnd = end < periodEnd ? end : periodEnd;
+    return sum + daysBetween(overlapStart, overlapEnd);
+  }, 0);
+}
+
+function percentage(value: number, total: number) {
+  return total > 0 ? Number(((value / total) * 100).toFixed(1)) : 0;
 }

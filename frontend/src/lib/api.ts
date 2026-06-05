@@ -41,6 +41,17 @@ export const createPropertyIncome = (id: string, data: Record<string, unknown>) 
 export const createPropertyDocument = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/documents`, data).then((r) => r.data.data);
 export const updatePropertyOperation = (id: string, data: Record<string, unknown>) => api.patch(`/properties/${id}/operation`, data).then((r) => r.data.data);
 export const getPropertyReservations = (id: string) => withFallback(() => api.get(`/properties/${id}/reservations`).then((r) => r.data.data), []);
+export const getPropertyAirbnbStats = (id: string) => withFallback(() => api.get(`/properties/${id}/airbnb/stats`).then((r) => r.data.data), {
+  reservations_total: 0,
+  upcoming_reservations: 0,
+  next_check_in: null,
+  next_check_out: null,
+  booked_nights_current_month: 0,
+  booked_nights_next_30_days: 0,
+  occupancy_current_month: 0,
+  occupancy_next_30_days: 0,
+  incomes_missing_amount: 0
+});
 export const savePropertyAirbnbIcal = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/airbnb/ical`, data).then((r) => r.data.data);
 export const syncPropertyAirbnb = (id: string) => api.post(`/properties/${id}/airbnb/sync`).then((r) => r.data.data);
 export const createReservationIncome = (propertyId: string, reservationId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/reservations/${reservationId}/create-income`, data).then((r) => r.data.data);

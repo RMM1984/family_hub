@@ -22,6 +22,10 @@ airbnbRouter.post("/airbnb/sync", requireRole("admin"), async (req: AuthedReques
   res.json({ data: await airbnb.syncAirbnb(req.schemaName!, String(req.params.propertyId)) });
 });
 
+airbnbRouter.get("/airbnb/stats", async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await airbnb.getStats(req.schemaName!, String(req.params.propertyId)) });
+});
+
 airbnbRouter.patch("/reservations/:reservationId", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
   res.json({ data: await airbnb.updateReservation(req.schemaName!, String(req.params.propertyId), String(req.params.reservationId), req.body) });
 });

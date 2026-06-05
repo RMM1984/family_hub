@@ -112,6 +112,34 @@ export default function DashboardPage() {
           </div>
         </Card>
       </section>
+
+      <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+        <Card className="p-5">
+          <h2 className="mb-4 text-lg font-bold">Proximas reservas</h2>
+          <div className="space-y-3">
+            {(data.upcoming_reservations ?? []).map((reservation) => (
+              <Link key={reservation.id} href={`/properties/${reservation.property_id}`} className="block rounded-md border border-slate-200 p-4 transition hover:border-meadow">
+                <p className="font-semibold">{reservation.property_alias ?? "Vivienda"}</p>
+                <p className="text-sm text-slate-500">{reservation.guest_name ?? reservation.title ?? "Reserva"} · {formatDate(reservation.check_in)} - {formatDate(reservation.check_out)}</p>
+              </Link>
+            ))}
+            {(data.upcoming_reservations ?? []).length === 0 && <p className="text-sm text-slate-500">Sin próximas reservas.</p>}
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <h2 className="mb-4 text-lg font-bold">Importes pendientes</h2>
+          <div className="space-y-3">
+            {(data.incomes_missing_amount ?? []).map((reservation) => (
+              <Link key={reservation.id} href={`/properties/${reservation.property_id}`} className="block rounded-md border border-slate-200 p-4 transition hover:border-meadow">
+                <p className="font-semibold">{reservation.property_alias ?? "Vivienda"}</p>
+                <p className="text-sm text-slate-500">{reservation.guest_name ?? reservation.title ?? "Reserva"} · pendiente de importe</p>
+              </Link>
+            ))}
+            {(data.incomes_missing_amount ?? []).length === 0 && <p className="text-sm text-slate-500">No hay importes pendientes.</p>}
+          </div>
+        </Card>
+      </section>
     </div>
   );
 }
