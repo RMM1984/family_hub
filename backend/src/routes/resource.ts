@@ -34,7 +34,7 @@ export function resourceRouter(table: "properties" | "expenses" | "income" | "do
       res.json({ data: await monthlyExpenses.saveMonthlyExpenses(req.schemaName!, String(req.params.id), req.body ?? {}) });
     });
     router.get("/:id/stats/monthly", async (req: AuthedRequest, res) => {
-      res.json({ data: await finance.monthlyStats(req.schemaName!, String(req.params.id), req.query.year) });
+      res.json({ data: await monthlyExpenses.getMonthlyStats(req.schemaName!, String(req.params.id), req.query.year) });
     });
     router.post("/:id/expenses", requireRole("admin"), async (req: AuthedRequest, res) => {
       res.status(201).json({ data: await crud.createByProperty("expenses", req.schemaName!, String(req.params.id), req.body) });

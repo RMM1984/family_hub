@@ -72,6 +72,7 @@ export async function saveMonthlyExpenses(schemaName: string, propertyId: string
 export async function getMonthlyStats(schemaName: string, propertyId: string, yearInput: unknown) {
   await validateProperty(schemaName, propertyId);
   const year = normalizeYear(yearInput);
+  const yearStart = `${year}-01-01`;
   const income = await query(
     `select to_char(date_trunc('month', income_date::timestamp), 'YYYY-MM') as month,
             coalesce(sum(amount),0)::numeric as total
@@ -83,7 +84,7 @@ export async function getMonthlyStats(schemaName: string, propertyId: string, ye
        and coalesce(is_demo,false) = false
        and coalesce(amount_status, 'manual') <> 'missing'
      group by 1`,
-    [propertyId, `${year}-01-01`],
+    [propertyId, yearStart],
     schemaName
   );
   const expenses = await query(
@@ -95,20 +96,43 @@ export async function getMonthlyStats(schemaName: string, propertyId: string, ye
        and coalesce(expense_month, expense_date) < ($2::date + interval '1 year')
        and coalesce(is_demo,false) = false
      group by 1`,
-    [propertyId, `${year}-01-01`],
+    [propertyId, yearStart],
+    schemaName
+  );
+  const pendingIncome = await query(
+    `select to_char(date_trunc('month', income_date::timestamp), 'YYYY-MM') as month,
+            count(*)::int as total
+     from income
+     where property_id = $1
+       and income_date >= $2::date
+       and income_date < ($2::date + interval '1 year')
+       and coalesce(is_demo,false) = false
+       and (
+         amount is null
+         or amount = 0
+         or coalesce(amount_status, 'manual') = 'missing'
+       )
+     group by 1`,
+    [propertyId, yearStart],
     schemaName
   );
   const incomeByMonth = new Map(income.rows.map((row: any) => [row.month, Number(row.total ?? 0)]));
   const expenseByMonth = new Map(expenses.rows.map((row: any) => [row.month, Number(row.total ?? 0)]));
+  const pendingIncomeByMonth = new Map(pendingIncome.rows.map((row: any) => [row.month, Number(row.total ?? 0)]));
   const months = Array.from({ length: 12 }, (_, index) => {
     const month = `${year}-${String(index + 1).padStart(2, "0")}`;
     const incomeTotal = Number(incomeByMonth.get(month) ?? 0);
     const expenseTotal = Number(expenseByMonth.get(month) ?? 0);
+    const netProfit = incomeTotal - expenseTotal;
     return {
       month,
+      label: monthLabel(month),
       income_total: incomeTotal,
       expense_total: expenseTotal,
-      net_profit: incomeTotal - expenseTotal
+      net_profit: netProfit,
+      expense_ratio: incomeTotal > 0 ? roundPercent(expenseTotal / incomeTotal) : null,
+      profit_margin: incomeTotal > 0 ? roundPercent(netProfit / incomeTotal) : null,
+      pending_income_count: Number(pendingIncomeByMonth.get(month) ?? 0)
     };
   });
   return { year, months };
@@ -140,4 +164,28 @@ function isMonthlyCategory(value: string): value is MonthlyCategory {
 
 function sumItems(items: Array<{ amount: number }>) {
   return items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+}
+
+function roundPercent(value: number) {
+  return Math.round(value * 10000) / 100;
+}
+
+function monthLabel(month: string) {
+  const [, rawMonth] = month.split("-");
+  const monthIndex = Number(rawMonth) - 1;
+  const names = [
+    "Enero",
+    "Febrero",
+    "Marzo",
+    "Abril",
+    "Mayo",
+    "Junio",
+    "Julio",
+    "Agosto",
+    "Septiembre",
+    "Octubre",
+    "Noviembre",
+    "Diciembre"
+  ];
+  return names[monthIndex] ?? month;
 }
