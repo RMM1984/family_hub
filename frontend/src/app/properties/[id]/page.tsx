@@ -8,12 +8,12 @@ import { CalendarClock, ExternalLink, FileText, FolderSync, Plus, Receipt, Walle
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
-  connectPropertyDrive,
   createDriveFolder,
   createPropertyDocument,
   createPropertyExpense,
   createPropertyIncome,
   deleteDriveFolder,
+  getAvailableDriveFolders,
   getProperty,
   getPropertyDocuments,
   getPropertyDrive,
@@ -29,7 +29,7 @@ import {
   updateDriveFolder
 } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/format";
-import type { DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property } from "@/types";
+import type { AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, Income, Property } from "@/types";
 
 const tabs = ["Resumen", "Ingresos", "Gastos", "Documentos", "Drive", "Estadisticas"] as const;
 type Tab = (typeof tabs)[number];
@@ -45,6 +45,11 @@ export default function PropertyDetailPage() {
   const { data: expenses = [] } = useQuery<Expense[]>({ queryKey: ["property-expenses", propertyId], queryFn: () => getPropertyExpenses(propertyId) });
   const { data: documents = [] } = useQuery<DocumentItem[]>({ queryKey: ["property-documents", propertyId], queryFn: () => getPropertyDocuments(propertyId) });
   const { data: drive } = useQuery<DriveState>({ queryKey: ["property-drive", propertyId], queryFn: () => getPropertyDrive(propertyId) });
+  const { data: availableDriveFolders = [] } = useQuery<AvailableDriveFolder[]>({
+    queryKey: ["property-drive-available-folders", propertyId, drive?.google_connected],
+    queryFn: () => getAvailableDriveFolders(propertyId),
+    enabled: Boolean(drive?.google_connected)
+  });
   const totals = useMemo(() => {
     const totalIncome = income.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
     const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
@@ -61,7 +66,6 @@ export default function PropertyDetailPage() {
   const incomeMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyIncome(propertyId, data), onSuccess: refresh });
   const documentMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyDocument(propertyId, data), onSuccess: refresh });
   const refreshDrive = () => queryClient.invalidateQueries({ queryKey: ["property-drive", propertyId] });
-  const driveConnectMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => connectPropertyDrive(propertyId, data), onSuccess: refreshDrive });
   const driveAuthorizeMutation = useMutation({
     mutationFn: () => getPropertyDriveAuthUrl(propertyId),
     onSuccess: (data) => {
@@ -158,13 +162,14 @@ export default function PropertyDetailPage() {
       {tab === "Drive" && drive && (
         <DrivePanel
           drive={drive}
+          availableDriveFolders={availableDriveFolders}
+          googleStatus={searchParams.get("google")}
           expenses={expenses}
           documents={documents}
-          pendingConnect={driveConnectMutation.isPending}
+          pendingConnect={driveFolderCreateMutation.isPending}
           pendingAuthorize={driveAuthorizeMutation.isPending}
           pendingSync={driveSyncMutation.isPending || driveSyncAllMutation.isPending || driveFolderSyncMutation.isPending}
           pendingUpdate={driveUpdateMutation.isPending || driveLinkExpenseMutation.isPending || driveLinkDocumentMutation.isPending}
-          onConnect={(data) => driveConnectMutation.mutate(data)}
           onAuthorize={() => driveAuthorizeMutation.mutate()}
           onCreateFolder={(data) => driveFolderCreateMutation.mutate(data)}
           onUpdateFolder={(folderId, data) => driveFolderUpdateMutation.mutate({ folderId, data })}
@@ -190,13 +195,14 @@ export default function PropertyDetailPage() {
 
 function DrivePanel({
   drive,
+  availableDriveFolders,
+  googleStatus,
   expenses,
   documents,
   pendingConnect,
   pendingAuthorize,
   pendingSync,
   pendingUpdate,
-  onConnect,
   onAuthorize,
   onCreateFolder,
   onUpdateFolder,
@@ -209,13 +215,14 @@ function DrivePanel({
   onLinkDocument
 }: {
   drive: DriveState;
+  availableDriveFolders: AvailableDriveFolder[];
+  googleStatus: string | null;
   expenses: Expense[];
   documents: DocumentItem[];
   pendingConnect: boolean;
   pendingAuthorize: boolean;
   pendingSync: boolean;
   pendingUpdate: boolean;
-  onConnect: (data: Record<string, unknown>) => void;
   onAuthorize: () => void;
   onCreateFolder: (data: Record<string, unknown>) => void;
   onUpdateFolder: (folderId: string, data: Record<string, unknown>) => void;
@@ -229,11 +236,8 @@ function DrivePanel({
 }) {
   const [filter, setFilter] = useState("todos");
   const [folderFilter, setFolderFilter] = useState("todos");
-  const [providerFilter, setProviderFilter] = useState("todos");
-  const providers = Array.from(new Set(drive.files.map((file) => file.provider_hint ?? "desconocido")));
   const filtered = drive.files.filter((file) => {
     if (folderFilter !== "todos" && file.drive_folder_mapping_id !== folderFilter) return false;
-    if (providerFilter !== "todos" && (file.provider_hint ?? "desconocido") !== providerFilter) return false;
     if (filter === "todos") return true;
     if (filter === "sin_clasificar") return !file.document_type;
     if (filter === "vencimientos") return Boolean(file.expiration_date);
@@ -247,12 +251,14 @@ function DrivePanel({
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h3 className="text-lg font-bold">Documentos Drive</h3>
-            <p className="text-sm text-slate-500">{drive.folders.length > 0 ? `${drive.folders.length} carpetas vinculadas` : "Sin carpetas vinculadas"}</p>
-            <p className="mt-1 text-xs text-slate-500">Scope: {drive.scope}</p>
+            <h3 className="text-lg font-bold">Carpetas conectadas de Google Drive</h3>
+            <p className="text-sm text-slate-500">{drive.folders.length > 0 ? `${drive.folders.length} carpetas conectadas` : "Todavia no has conectado ninguna carpeta de Drive para esta vivienda."}</p>
+            <p className={`mt-2 inline-flex rounded-md px-3 py-1 text-sm font-semibold ${drive.google_connected ? "bg-emerald-50 text-meadow" : "bg-slate-100 text-slate-600"}`}>
+              {drive.google_connected ? "Conectado a Google Drive" : "Google Drive pendiente de autorizar"}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {drive.google_configured && (
+            {drive.google_configured && !drive.google_connected && (
               <Button disabled={pendingAuthorize} onClick={onAuthorize} className="bg-ink">
                 <ExternalLink className="h-4 w-4" />
                 Autorizar Google
@@ -260,41 +266,37 @@ function DrivePanel({
             )}
             <Button disabled={drive.folders.length === 0 || pendingSync} onClick={onSyncAll} className="bg-meadow hover:bg-green-700">
               <FolderSync className="h-4 w-4" />
-              Sincronizar todas
+              Sincronizar carpetas
             </Button>
           </div>
         </div>
-        {!drive.google_configured && (
-          <p className="mt-4 rounded-md bg-amber-50 p-3 text-sm text-sun">Google Drive no esta configurado en Railway. Puedes vincular carpetas ahora; la sincronizacion real requiere OAuth y token autorizado.</p>
+        {googleStatus === "connected" && (
+          <p className="mt-4 rounded-md bg-emerald-50 p-3 text-sm font-semibold text-meadow">Google Drive conectado correctamente.</p>
         )}
-        <DriveConnectForm pending={pendingConnect} onSubmit={(data) => {
-          if (String(data.access_token ?? "")) onConnect(data);
-          else onCreateFolder(data);
-        }} />
+        {!drive.google_configured && (
+          <p className="mt-4 rounded-md bg-amber-50 p-3 text-sm text-sun">Google Drive no esta configurado en Railway. Puedes preparar carpetas manuales; la sincronizacion real requiere OAuth y token autorizado.</p>
+        )}
+        <DriveConnectForm folders={availableDriveFolders} googleConnected={Boolean(drive.google_connected)} pending={pendingConnect} onSubmit={onCreateFolder} />
       </Card>
 
       <Card className="p-5">
-        <h3 className="mb-4 font-bold">Carpetas Drive vinculadas</h3>
+        <h3 className="mb-4 font-bold">Carpetas conectadas</h3>
         <div className="grid gap-3">
           {drive.folders.map((folder) => (
             <DriveFolderCard key={folder.id} folder={folder} pending={pendingSync} onSync={onSyncFolder} onUpdate={onUpdateFolder} onDelete={onDeleteFolder} />
           ))}
-          {drive.folders.length === 0 && <p className="text-sm text-slate-500">Anade carpetas como Pastores8-Facturas, Pastores8-Documentos o Pastores8-Seguros.</p>}
+          {drive.folders.length === 0 && <p className="text-sm text-slate-500">Todavia no has conectado ninguna carpeta de Drive para esta vivienda.</p>}
         </div>
       </Card>
 
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-2 md:grid-cols-2">
         <select value={folderFilter} onChange={(event) => setFolderFilter(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
           <option value="todos">Todas las carpetas</option>
           {drive.folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.drive_folder_name}</option>)}
         </select>
-        <select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
-          <option value="todos">Todos los proveedores</option>
-          {providers.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
-        </select>
         <select value={filter} onChange={(event) => setFilter(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
-          {["todos", "facturas", "documentos", "contratos", "seguros", "pending_review", "linked", "ignored", "vencimientos", "sin_clasificar", "sin_vincular"].map((item) => (
-            <option key={item} value={item}>{item.replace("_", " ")}</option>
+          {["todos", "facturas", "documentos", "contratos", "seguros", "pending_review", "reviewed", "linked", "ignored", "vencimientos", "sin_clasificar", "sin_vincular"].map((item) => (
+            <option key={item} value={item}>{labelDriveFilter(item)}</option>
           ))}
         </select>
       </div>
@@ -309,59 +311,104 @@ function DrivePanel({
   );
 }
 
-function DriveConnectForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data: Record<string, unknown>) => void }) {
+function DriveConnectForm({ folders, googleConnected, pending, onSubmit }: { folders: AvailableDriveFolder[]; googleConnected: boolean; pending: boolean; onSubmit: (data: Record<string, unknown>) => void }) {
+  const [mode, setMode] = useState<"select" | "manual">("select");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const selectedFolderId = String(form.get("drive_folder_id") ?? "");
+    const selectedFolder = folders.find((folder) => folder.id === selectedFolderId);
+    const manualFolder = String(form.get("folder_url") ?? "");
     onSubmit({
-      folder_url: String(form.get("folder_url") ?? ""),
-      folder_name: String(form.get("folder_name") ?? ""),
+      folder_title: String(form.get("folder_title") ?? ""),
+      folder_id: mode === "select" ? selectedFolderId : manualFolder,
+      folder_url: mode === "select" ? selectedFolder?.webViewLink ?? "" : manualFolder,
       folder_type: String(form.get("folder_type") ?? "otros"),
-      provider_hint: String(form.get("provider_hint") ?? ""),
-      access_token: String(form.get("access_token") ?? "")
+      provider_hint: String(form.get("provider_hint") ?? "")
     });
     event.currentTarget.reset();
   }
   return (
-    <form onSubmit={submit} className="mt-5 grid gap-3 lg:grid-cols-[1fr_220px]">
-      <input name="folder_url" required placeholder="URL o ID de carpeta Drive" className="h-10 rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
-      <input name="folder_name" placeholder="Nombre visible" className="h-10 rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
-      <select name="folder_type" className="h-10 rounded-md border border-slate-300 px-3 outline-none focus:border-meadow">
-        {["facturas", "documentos", "contratos", "seguros", "ibi", "comunidad", "mantenimiento", "reservas", "otros"].map((item) => <option key={item} value={item}>{item}</option>)}
-      </select>
-      <input name="provider_hint" placeholder="Proveedor sugerido" className="h-10 rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
-      <input name="access_token" placeholder="Access token OAuth opcional" className="h-10 rounded-md border border-slate-300 px-3 outline-none focus:border-meadow lg:col-span-2" />
-      <Button disabled={pending} className="bg-ink lg:col-span-2">Conectar carpeta Drive</Button>
+    <form onSubmit={submit} className="mt-5 grid gap-3">
+      <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Titulo de la carpeta en Hogarflow</span>
+          <input name="folder_title" required placeholder="Facturas" className="h-10 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Tipo de carpeta</span>
+          <select name="folder_type" className="h-10 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-meadow">
+            {["facturas", "documentos", "seguros", "contratos", "ibi", "comunidad", "mantenimiento", "reservas", "otros"].map((item) => <option key={item} value={item}>{labelFolderType(item)}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <div className="rounded-md border border-slate-200 p-3">
+        <div className="mb-3 flex flex-wrap gap-2">
+          <button type="button" onClick={() => setMode("select")} className={`rounded-md px-3 py-2 text-sm font-semibold ${mode === "select" ? "bg-ink text-white" : "bg-slate-100 text-slate-600"}`}>Buscar carpeta en Drive</button>
+          <button type="button" onClick={() => setMode("manual")} className={`rounded-md px-3 py-2 text-sm font-semibold ${mode === "manual" ? "bg-ink text-white" : "bg-slate-100 text-slate-600"}`}>Pegar URL o ID de carpeta</button>
+        </div>
+        {mode === "select" && (
+          <select name="drive_folder_id" required disabled={!googleConnected || folders.length === 0} className="h-10 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-meadow">
+            <option value="">{googleConnected ? "Selecciona una carpeta de Drive" : "Autoriza Google Drive para ver carpetas"}</option>
+            {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+          </select>
+        )}
+        {mode === "manual" && (
+          <input name="folder_url" required placeholder="URL o ID de carpeta Drive" className="h-10 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
+        )}
+      </div>
+
+      <div>
+        <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} className="text-sm font-semibold text-meadow">
+          {showAdvanced ? "Ocultar opciones avanzadas" : "Opciones avanzadas"}
+        </button>
+        {showAdvanced && (
+          <label className="mt-2 block">
+            <span className="mb-1 block text-sm font-medium">Proveedor / compania</span>
+            <input name="provider_hint" placeholder="Iberdrola, Movistar, Comunidad..." className="h-10 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-meadow" />
+          </label>
+        )}
+      </div>
+
+      <Button disabled={pending || (mode === "select" && (!googleConnected || folders.length === 0))} className="bg-ink">Conectar carpeta</Button>
     </form>
   );
 }
 
 function DriveFolderCard({ folder, pending, onSync, onUpdate, onDelete }: { folder: DriveFolderMapping; pending: boolean; onSync: (folderId: string) => void; onUpdate: (folderId: string, data: Record<string, unknown>) => void; onDelete: (folderId: string) => void }) {
   const [folderType, setFolderType] = useState(folder.folder_type);
-  const [providerHint, setProviderHint] = useState(folder.provider_hint ?? "");
   const [syncEnabled, setSyncEnabled] = useState(folder.sync_enabled);
+  const [editing, setEditing] = useState(false);
+  const realFolderName = folder.metadata?.drive_folder_name ?? folder.drive_folder_name;
   return (
     <div className="rounded-md border border-slate-200 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="font-bold">{folder.drive_folder_name}</p>
-          <p className="text-sm text-slate-500">{folder.folder_type} · {folder.provider_hint || "sin proveedor"} · {folder.file_count ?? 0} archivos</p>
+          <p className="text-sm text-slate-500">Carpeta Drive: {realFolderName}</p>
+          <p className="text-sm text-slate-500">Tipo: {labelFolderType(folder.folder_type)} · Archivos: {folder.file_count ?? 0}</p>
           <p className="text-xs text-slate-500">Ultima sincronizacion: {formatDate(folder.last_sync_at)}</p>
         </div>
-        <Button disabled={pending || !folder.sync_enabled} onClick={() => onSync(folder.id)} className="bg-meadow hover:bg-green-700">Sincronizar</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={pending || !folder.sync_enabled} onClick={() => onSync(folder.id)} className="bg-meadow hover:bg-green-700">Sincronizar</Button>
+          <Button onClick={() => setEditing(!editing)} className="bg-ink">Editar</Button>
+          <button onClick={() => onDelete(folder.id)} className="h-10 rounded-md border border-coral px-3 text-sm font-semibold text-coral">Desconectar</button>
+        </div>
       </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_140px_120px]">
-        <select value={folderType} onChange={(event) => setFolderType(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
-          {["facturas", "documentos", "contratos", "seguros", "ibi", "comunidad", "mantenimiento", "reservas", "otros"].map((item) => <option key={item} value={item}>{item}</option>)}
-        </select>
-        <input value={providerHint} onChange={(event) => setProviderHint(event.target.value)} placeholder="Proveedor sugerido" className="h-10 rounded-md border border-slate-300 px-3" />
-        <label className="flex h-10 items-center gap-2 rounded-md border border-slate-300 px-3 text-sm">
-          <input type="checkbox" checked={syncEnabled} onChange={(event) => setSyncEnabled(event.target.checked)} />
-          Sync
-        </label>
-        <Button onClick={() => onUpdate(folder.id, { folder_type: folderType, provider_hint: providerHint, sync_enabled: syncEnabled })} className="bg-ink">Guardar</Button>
-      </div>
-      <button onClick={() => onDelete(folder.id)} className="mt-3 text-sm font-semibold text-coral">Eliminar vinculo</button>
+      {editing && (
+        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_140px_120px]">
+          <select value={folderType} onChange={(event) => setFolderType(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
+            {["facturas", "documentos", "seguros", "contratos", "ibi", "comunidad", "mantenimiento", "reservas", "otros"].map((item) => <option key={item} value={item}>{labelFolderType(item)}</option>)}
+          </select>
+          <label className="flex h-10 items-center gap-2 rounded-md border border-slate-300 px-3 text-sm">
+            <input type="checkbox" checked={syncEnabled} onChange={(event) => setSyncEnabled(event.target.checked)} />
+            Activa
+          </label>
+          <Button onClick={() => onUpdate(folder.id, { folder_type: folderType, sync_enabled: syncEnabled })} className="bg-ink">Guardar</Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -370,53 +417,127 @@ function DriveFileCard({ file, expenses, documents, pending, onUpdate, onLinkExp
   const [documentType, setDocumentType] = useState(file.document_type ?? "");
   const [expirationDate, setExpirationDate] = useState(file.expiration_date ?? "");
   const [reviewStatus, setReviewStatus] = useState<string>(file.review_status ?? "pending_review");
-  const [providerHint, setProviderHint] = useState(file.provider_hint ?? "");
   const [expenseId, setExpenseId] = useState(file.linked_expense_id ?? "");
   const [documentId, setDocumentId] = useState(file.linked_document_id ?? "");
+  const [editing, setEditing] = useState(false);
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate font-bold">{file.name}</p>
-          <p className="text-sm text-slate-500">{file.mime_type ?? "Archivo"} · modificado {formatDate(file.modified_time)}</p>
-          <p className="mt-1 text-sm text-slate-500">Origen: {file.source_provider ?? "google_drive"} · Carpeta: {file.source_folder_name ?? file.drive_folder_id} · Vivienda: {file.property_alias ?? "actual"}</p>
-          <p className="mt-1 text-sm text-slate-500">Tipo carpeta: {file.folder_type ?? "-"} · Proveedor: {file.provider_hint ?? "desconocido"} · Estado: {file.review_status ?? "pending_review"}</p>
-          <p className="mt-1 text-sm text-slate-500">Clasificacion: {file.document_type ?? "Sin clasificar"} · vence {formatDate(file.expiration_date)} · sync {formatDate(file.source_synced_at)}</p>
+          <p className="text-sm text-slate-500">Tipo: {labelMimeType(file.mime_type)} · Carpeta: {file.source_folder_name ?? labelFolderType(file.folder_type)} · Modificado: {formatDate(file.modified_time)}</p>
+          <p className="mt-1 text-sm text-slate-500">Estado: {labelReviewStatus(file.review_status)} · Clasificacion: {labelDocumentType(file.document_type)}</p>
         </div>
-        {file.web_view_link && (
-          <a href={file.web_view_link} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white">
-            <ExternalLink className="h-4 w-4" />
-            Abrir en Drive
-          </a>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {file.web_view_link && (
+            <a href={file.web_view_link} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white">
+              <ExternalLink className="h-4 w-4" />
+              Abrir en Drive
+            </a>
+          )}
+          <Button disabled={pending} onClick={() => onUpdate(file.id, { review_status: "reviewed" })} className="bg-meadow hover:bg-green-700">Marcar revisado</Button>
+        </div>
       </div>
-      <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_1fr_1fr_120px]">
-        <select value={documentType} onChange={(event) => setDocumentType(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
-          <option value="">Sin clasificar</option>
-          {["factura", "contrato", "seguro", "ibi", "comunidad", "mantenimiento", "reserva", "otro"].map((item) => <option key={item} value={item}>{item}</option>)}
-        </select>
-        <input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3" />
-        <select value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
-          {["pending_review", "reviewed", "linked", "ignored"].map((item) => <option key={item} value={item}>{item.replace("_", " ")}</option>)}
-        </select>
-        <input value={providerHint} onChange={(event) => setProviderHint(event.target.value)} placeholder="Proveedor" className="h-10 rounded-md border border-slate-300 px-3" />
-        <Button disabled={pending} onClick={() => onUpdate(file.id, { document_type: documentType, expiration_date: expirationDate, review_status: reviewStatus, provider_hint: providerHint })} className="bg-meadow hover:bg-green-700">Guardar</Button>
-      </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_160px_1fr_160px]">
+      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_160px]">
         <select value={expenseId} onChange={(event) => setExpenseId(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
           <option value="">Asociar a gasto</option>
           {expenses.map((expense) => <option key={expense.id} value={expense.id}>{expense.provider ?? expense.description ?? expense.category} · {formatCurrency(expense.amount)}</option>)}
         </select>
-        <Button disabled={!expenseId || pending} onClick={() => onLinkExpense(file.id, expenseId)} className="bg-ink">Asociar</Button>
+        <Button disabled={!expenseId || pending} onClick={() => onLinkExpense(file.id, expenseId)} className="bg-ink">Asociar a gasto</Button>
+      </div>
+      <button onClick={() => setEditing(!editing)} className="mt-3 text-sm font-semibold text-meadow">{editing ? "Ocultar detalles" : "Editar detalles"}</button>
+      {editing && (
+        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_1fr_120px]">
+          <select value={documentType} onChange={(event) => setDocumentType(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
+            <option value="">Sin clasificar</option>
+            {["factura", "contrato", "seguro", "ibi", "comunidad", "mantenimiento", "reserva", "otro"].map((item) => <option key={item} value={item}>{labelDocumentType(item)}</option>)}
+          </select>
+          <input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3" />
+          <select value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
+            {["pending_review", "reviewed", "linked", "ignored"].map((item) => <option key={item} value={item}>{labelReviewStatus(item)}</option>)}
+          </select>
+          <Button disabled={pending} onClick={() => onUpdate(file.id, { document_type: documentType, expiration_date: expirationDate, review_status: reviewStatus })} className="bg-meadow hover:bg-green-700">Guardar</Button>
+        </div>
+      )}
+      {editing && (
+        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_160px]">
         <select value={documentId} onChange={(event) => setDocumentId(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
           <option value="">Asociar a documento</option>
           {documents.map((document) => <option key={document.id} value={document.id}>{document.title}</option>)}
         </select>
         <Button disabled={!documentId || pending} onClick={() => onLinkDocument(file.id, documentId)} className="bg-ink">Asociar</Button>
-      </div>
+        </div>
+      )}
     </Card>
   );
 }
+
+function labelFolderType(value?: string | null) {
+  const labels: Record<string, string> = {
+    facturas: "Facturas",
+    documentos: "Documentos",
+    seguros: "Seguros",
+    contratos: "Contratos",
+    ibi: "IBI",
+    comunidad: "Comunidad",
+    mantenimiento: "Mantenimiento",
+    reservas: "Reservas",
+    otros: "Otros"
+  };
+  return labels[String(value ?? "otros")] ?? "Otros";
+}
+
+function labelReviewStatus(value?: string | null) {
+  const labels: Record<string, string> = {
+    pending_review: "Pendiente",
+    reviewed: "Revisado",
+    linked: "Asociado",
+    ignored: "Ignorado"
+  };
+  return labels[String(value ?? "pending_review")] ?? "Pendiente";
+}
+
+function labelDocumentType(value?: string | null) {
+  const labels: Record<string, string> = {
+    factura: "Factura",
+    contrato: "Contrato",
+    seguro: "Seguro",
+    ibi: "IBI",
+    comunidad: "Comunidad",
+    mantenimiento: "Mantenimiento",
+    reserva: "Reserva",
+    otro: "Otro"
+  };
+  return labels[String(value ?? "")] ?? "Sin clasificar";
+}
+
+function labelMimeType(value?: string | null) {
+  const mime = String(value ?? "").toLowerCase();
+  if (mime.includes("pdf")) return "PDF";
+  if (mime.startsWith("image/")) return "Imagen";
+  if (mime.includes("document") || mime.includes("word") || mime.includes("text")) return "Documento";
+  if (mime.includes("spreadsheet") || mime.includes("excel")) return "Hoja de calculo";
+  return "Archivo";
+}
+
+function labelDriveFilter(value: string) {
+  const labels: Record<string, string> = {
+    todos: "Todos los archivos",
+    facturas: "Facturas",
+    documentos: "Documentos",
+    contratos: "Contratos",
+    seguros: "Seguros",
+    pending_review: "Pendientes",
+    reviewed: "Revisados",
+    linked: "Asociados",
+    ignored: "Ignorados",
+    vencimientos: "Con vencimiento",
+    sin_clasificar: "Sin clasificar",
+    sin_vincular: "Sin asociar"
+  };
+  return labels[value] ?? value;
+}
+
 function Metric({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {
   return (
     <Card className="p-5">

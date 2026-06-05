@@ -41,6 +41,7 @@ export const createPropertyIncome = (id: string, data: Record<string, unknown>) 
 export const createPropertyDocument = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/documents`, data).then((r) => r.data.data);
 export const getPropertyDrive = (id: string) => withFallback(() => api.get(`/properties/${id}/drive`).then((r) => r.data.data), mockDriveState);
 export const getPropertyDriveAuthUrl = (id: string) => api.get(`/properties/${id}/drive/auth-url`).then((r) => r.data.data as { url: string; scope: string });
+export const getAvailableDriveFolders = (id: string) => api.get(`/properties/${id}/drive/available-folders`).then((r) => r.data.data);
 export const connectPropertyDrive = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/drive/connect`, data).then((r) => r.data.data);
 export const syncPropertyDrive = (id: string) => api.post(`/properties/${id}/drive/sync`).then((r) => r.data.data);
 export const syncAllPropertyDrive = (id: string) => api.post(`/properties/${id}/drive/sync-all`).then((r) => r.data.data);

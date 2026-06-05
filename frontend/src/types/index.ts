@@ -100,6 +100,16 @@ export interface DriveFolderMapping {
   file_count?: number;
   property_alias?: string;
   property_address?: string;
+  metadata?: {
+    drive_folder_name?: string;
+  };
+}
+
+export interface AvailableDriveFolder {
+  id: string;
+  name: string;
+  modifiedTime?: string;
+  webViewLink?: string;
 }
 
 export interface DriveFile {
@@ -136,6 +146,7 @@ export interface DriveState {
   folders: DriveFolderMapping[];
   files: DriveFile[];
   google_configured: boolean;
+  google_connected?: boolean;
   scope: string;
 }
 

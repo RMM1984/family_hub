@@ -14,6 +14,10 @@ driveRouter.get("/auth-url", requireRole("admin"), async (req: AuthedRequest, re
   res.json({ data: await drive.getAuthUrl(req.schemaName!, String(req.params.propertyId), req.user!) });
 });
 
+driveRouter.get("/available-folders", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.listAvailableFolders(req.schemaName!, String(req.params.propertyId)) });
+});
+
 driveRouter.post("/connect", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
   res.status(201).json({ data: await drive.connectFolder(req.schemaName!, String(req.params.propertyId), req.user!.id, req.body) });
 });

@@ -20,6 +20,13 @@ type DriveFile = {
   modifiedTime?: string;
 };
 
+type DriveFolder = {
+  id: string;
+  name: string;
+  modifiedTime?: string;
+  webViewLink?: string;
+};
+
 type GoogleOAuthState = {
   purpose: "google_drive_oauth";
   propertyId: string;
@@ -30,14 +37,23 @@ type GoogleOAuthState = {
 
 export async function getDriveState(schemaName: string, propertyId: string) {
   await validateProperty(schemaName, propertyId);
-  const integration = await query("select id, property_id, provider, folder_id, folder_name, folder_url, connected_at, last_sync_at, is_active from property_drive_integrations where property_id = $1 and provider = 'google_drive' and is_active = true", [propertyId], schemaName);
+  const integration = await query(
+    `select id, property_id, provider, folder_id, folder_name, folder_url, connected_at, last_sync_at, is_active,
+            (encrypted_access_token is not null or encrypted_refresh_token is not null) as has_oauth_tokens
+     from property_drive_integrations
+     where property_id = $1 and provider = 'google_drive' and is_active = true`,
+    [propertyId],
+    schemaName
+  );
   const folders = await listFolders(schemaName, propertyId);
   const files = await listFiles(schemaName, propertyId);
+  const activeIntegration = integration.rows[0] ?? null;
   return {
-    integration: integration.rows[0] ?? null,
+    integration: activeIntegration,
     folders,
     files,
     google_configured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI),
+    google_connected: Boolean(activeIntegration?.has_oauth_tokens),
     scope: env.GOOGLE_DRIVE_SCOPE
   };
 }
@@ -111,8 +127,10 @@ export async function connectFolder(schemaName: string, propertyId: string, user
     refreshToken = tokens.refresh_token ?? refreshToken;
     expiresAt = tokens.expires_in ? new Date(Date.now() + Number(tokens.expires_in) * 1000).toISOString() : null;
   }
-  const folder = accessToken ? await fetchDriveFolder(accessToken, folderId) : null;
-  const folderName = String(input.folder_name ?? folder?.name ?? "Carpeta Drive");
+  const integrationForFolder = accessToken ? null : await getIntegrationWithTokens(schemaName, propertyId);
+  const existingToken = integrationForFolder ? decryptSecret(integrationForFolder.encrypted_access_token) ?? await refreshAccessToken(integrationForFolder, schemaName) : null;
+  const folder = accessToken || existingToken ? await fetchDriveFolder(accessToken ?? existingToken!, folderId) : null;
+  const folderName = String(input.folder_title ?? input.folder_name ?? folder?.name ?? "Carpeta Drive");
   const folderUrl = String(input.folder_url ?? folder?.webViewLink ?? `https://drive.google.com/drive/folders/${folderId}`);
   const folderType = normalizeFolderType(input.folder_type, folderName);
   const providerHint = normalizeProviderHint(input.provider_hint, folderName);
@@ -142,9 +160,27 @@ export async function connectFolder(schemaName: string, propertyId: string, user
     drive_folder_url: folderUrl,
     folder_type: folderType,
     provider_hint: providerHint,
+    metadata: { drive_folder_name: folder?.name ?? folderName },
     sync_enabled: input.sync_enabled
   });
   return { ...connection, folder_mapping: mapping };
+}
+
+export async function listAvailableFolders(schemaName: string, propertyId: string) {
+  await validateProperty(schemaName, propertyId);
+  const integration = await getIntegrationWithTokens(schemaName, propertyId);
+  if (!integration) {
+    const err = new Error("Primero autoriza Google Drive para listar carpetas") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const token = decryptSecret(integration.encrypted_access_token) ?? await refreshAccessToken(integration, schemaName);
+  if (!token) {
+    const err = new Error("Drive esta conectado, pero falta un token OAuth valido") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  return fetchDriveFolders(token);
 }
 
 export async function syncFolder(schemaName: string, propertyId: string) {
@@ -353,14 +389,18 @@ export async function createFolder(schemaName: string, propertyId: string, input
     err.status = 400;
     throw err;
   }
-  const folderName = String(input.drive_folder_name ?? input.folder_name ?? "Carpeta Drive");
+  const integration = await getIntegrationWithTokens(schemaName, propertyId);
+  const token = integration ? decryptSecret(integration.encrypted_access_token) ?? await refreshAccessToken(integration, schemaName) : null;
+  const driveFolder = token ? await fetchDriveFolder(token, folderId) : null;
+  const folderName = String(input.folder_title ?? input.drive_folder_name ?? input.folder_name ?? driveFolder?.name ?? "Carpeta Drive");
   return upsertFolderMapping(schemaName, propertyId, {
-    connection_id: input.connection_id ?? null,
+    connection_id: input.connection_id ?? integration?.id ?? null,
     drive_folder_id: folderId,
     drive_folder_name: folderName,
-    drive_folder_url: input.drive_folder_url ?? input.folder_url ?? `https://drive.google.com/drive/folders/${folderId}`,
+    drive_folder_url: input.drive_folder_url ?? input.folder_url ?? driveFolder?.webViewLink ?? `https://drive.google.com/drive/folders/${folderId}`,
     folder_type: normalizeFolderType(input.folder_type, folderName),
     provider_hint: normalizeProviderHint(input.provider_hint, folderName),
+    metadata: { drive_folder_name: driveFolder?.name ?? folderName },
     sync_enabled: input.sync_enabled
   });
 }
@@ -623,6 +663,27 @@ async function fetchDriveFolder(accessToken: string, folderId: string) {
   });
   if (!response.ok) throw new Error("No se pudo leer la carpeta de Google Drive");
   return response.json() as Promise<{ id: string; name: string; mimeType: string; webViewLink?: string }>;
+}
+
+async function fetchDriveFolders(accessToken: string) {
+  const folders: DriveFolder[] = [];
+  let pageToken = "";
+  do {
+    const url = new URL("https://www.googleapis.com/drive/v3/files");
+    url.searchParams.set("q", "mimeType = 'application/vnd.google-apps.folder' and trashed = false");
+    url.searchParams.set("fields", "nextPageToken,files(id,name,modifiedTime,webViewLink)");
+    url.searchParams.set("pageSize", "100");
+    url.searchParams.set("orderBy", "modifiedTime desc");
+    url.searchParams.set("supportsAllDrives", "true");
+    url.searchParams.set("includeItemsFromAllDrives", "true");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) throw new Error("No se pudieron listar carpetas de Google Drive");
+    const data = await response.json() as { nextPageToken?: string; files?: DriveFolder[] };
+    folders.push(...(data.files ?? []));
+    pageToken = data.nextPageToken ?? "";
+  } while (pageToken);
+  return folders;
 }
 
 async function fetchDriveFiles(accessToken: string, folderId: string) {
