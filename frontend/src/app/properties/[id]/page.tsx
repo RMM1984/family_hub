@@ -2,7 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, ExternalLink, FileText, FolderSync, Plus, Receipt, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
   getProperty,
   getPropertyDocuments,
   getPropertyDrive,
+  getPropertyDriveAuthUrl,
   getPropertyExpenses,
   getPropertyIncome,
   linkDriveFileDocument,
@@ -35,9 +36,10 @@ type Tab = (typeof tabs)[number];
 
 export default function PropertyDetailPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const propertyId = params.id;
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<Tab>("Resumen");
+  const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "Drive" ? "Drive" : "Resumen");
   const { data: property } = useQuery<Property>({ queryKey: ["property", propertyId], queryFn: () => getProperty(propertyId) });
   const { data: income = [] } = useQuery<Income[]>({ queryKey: ["property-income", propertyId], queryFn: () => getPropertyIncome(propertyId) });
   const { data: expenses = [] } = useQuery<Expense[]>({ queryKey: ["property-expenses", propertyId], queryFn: () => getPropertyExpenses(propertyId) });
@@ -60,6 +62,12 @@ export default function PropertyDetailPage() {
   const documentMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyDocument(propertyId, data), onSuccess: refresh });
   const refreshDrive = () => queryClient.invalidateQueries({ queryKey: ["property-drive", propertyId] });
   const driveConnectMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => connectPropertyDrive(propertyId, data), onSuccess: refreshDrive });
+  const driveAuthorizeMutation = useMutation({
+    mutationFn: () => getPropertyDriveAuthUrl(propertyId),
+    onSuccess: (data) => {
+      window.location.href = data.url;
+    }
+  });
   const driveFolderCreateMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createDriveFolder(propertyId, data), onSuccess: refreshDrive });
   const driveFolderUpdateMutation = useMutation({ mutationFn: ({ folderId, data }: { folderId: string; data: Record<string, unknown> }) => updateDriveFolder(propertyId, folderId, data), onSuccess: refreshDrive });
   const driveFolderDeleteMutation = useMutation({ mutationFn: (folderId: string) => deleteDriveFolder(propertyId, folderId), onSuccess: refreshDrive });
@@ -153,9 +161,11 @@ export default function PropertyDetailPage() {
           expenses={expenses}
           documents={documents}
           pendingConnect={driveConnectMutation.isPending}
+          pendingAuthorize={driveAuthorizeMutation.isPending}
           pendingSync={driveSyncMutation.isPending || driveSyncAllMutation.isPending || driveFolderSyncMutation.isPending}
           pendingUpdate={driveUpdateMutation.isPending || driveLinkExpenseMutation.isPending || driveLinkDocumentMutation.isPending}
           onConnect={(data) => driveConnectMutation.mutate(data)}
+          onAuthorize={() => driveAuthorizeMutation.mutate()}
           onCreateFolder={(data) => driveFolderCreateMutation.mutate(data)}
           onUpdateFolder={(folderId, data) => driveFolderUpdateMutation.mutate({ folderId, data })}
           onDeleteFolder={(folderId) => driveFolderDeleteMutation.mutate(folderId)}
@@ -183,9 +193,11 @@ function DrivePanel({
   expenses,
   documents,
   pendingConnect,
+  pendingAuthorize,
   pendingSync,
   pendingUpdate,
   onConnect,
+  onAuthorize,
   onCreateFolder,
   onUpdateFolder,
   onDeleteFolder,
@@ -200,9 +212,11 @@ function DrivePanel({
   expenses: Expense[];
   documents: DocumentItem[];
   pendingConnect: boolean;
+  pendingAuthorize: boolean;
   pendingSync: boolean;
   pendingUpdate: boolean;
   onConnect: (data: Record<string, unknown>) => void;
+  onAuthorize: () => void;
   onCreateFolder: (data: Record<string, unknown>) => void;
   onUpdateFolder: (folderId: string, data: Record<string, unknown>) => void;
   onDeleteFolder: (folderId: string) => void;
@@ -237,10 +251,18 @@ function DrivePanel({
             <p className="text-sm text-slate-500">{drive.folders.length > 0 ? `${drive.folders.length} carpetas vinculadas` : "Sin carpetas vinculadas"}</p>
             <p className="mt-1 text-xs text-slate-500">Scope: {drive.scope}</p>
           </div>
-          <Button disabled={drive.folders.length === 0 || pendingSync} onClick={onSyncAll} className="bg-meadow hover:bg-green-700">
-            <FolderSync className="h-4 w-4" />
-            Sincronizar todas
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {drive.google_configured && (
+              <Button disabled={pendingAuthorize} onClick={onAuthorize} className="bg-ink">
+                <ExternalLink className="h-4 w-4" />
+                Autorizar Google
+              </Button>
+            )}
+            <Button disabled={drive.folders.length === 0 || pendingSync} onClick={onSyncAll} className="bg-meadow hover:bg-green-700">
+              <FolderSync className="h-4 w-4" />
+              Sincronizar todas
+            </Button>
+          </div>
         </div>
         {!drive.google_configured && (
           <p className="mt-4 rounded-md bg-amber-50 p-3 text-sm text-sun">Google Drive no esta configurado en Railway. Puedes vincular carpetas ahora; la sincronizacion real requiere OAuth y token autorizado.</p>

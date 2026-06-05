@@ -10,8 +10,8 @@ driveRouter.get("/", async (req: AuthedRequest, res: Response) => {
   res.json({ data: await drive.getDriveState(req.schemaName!, String(req.params.propertyId)) });
 });
 
-driveRouter.get("/auth-url", async (req: AuthedRequest, res: Response) => {
-  res.json({ data: await drive.getAuthUrl(req.schemaName!, String(req.params.propertyId)) });
+driveRouter.get("/auth-url", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.getAuthUrl(req.schemaName!, String(req.params.propertyId), req.user!) });
 });
 
 driveRouter.post("/connect", requireRole("admin"), async (req: AuthedRequest, res: Response) => {

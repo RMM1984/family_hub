@@ -2,6 +2,8 @@ import { query } from "../config/db.js";
 import { env } from "../config/env.js";
 import { decryptSecret, encryptSecret } from "../utils/crypto.js";
 import { validateProperty } from "./crudService.js";
+import jwt from "jsonwebtoken";
+import type { AuthUser } from "../types.js";
 
 const documentTypes = new Set(["factura", "contrato", "seguro", "ibi", "comunidad", "mantenimiento", "reserva", "otro"]);
 const folderTypes = new Set(["facturas", "documentos", "contratos", "seguros", "ibi", "comunidad", "mantenimiento", "reservas", "otros"]);
@@ -18,6 +20,14 @@ type DriveFile = {
   modifiedTime?: string;
 };
 
+type GoogleOAuthState = {
+  purpose: "google_drive_oauth";
+  propertyId: string;
+  schemaName: string;
+  userId: string;
+  tenantId: string;
+};
+
 export async function getDriveState(schemaName: string, propertyId: string) {
   await validateProperty(schemaName, propertyId);
   const integration = await query("select id, property_id, provider, folder_id, folder_name, folder_url, connected_at, last_sync_at, is_active from property_drive_integrations where property_id = $1 and provider = 'google_drive' and is_active = true", [propertyId], schemaName);
@@ -32,10 +42,10 @@ export async function getDriveState(schemaName: string, propertyId: string) {
   };
 }
 
-export async function getAuthUrl(schemaName: string, propertyId: string) {
+export async function getAuthUrl(schemaName: string, propertyId: string, user: AuthUser) {
   await validateProperty(schemaName, propertyId);
   ensureGoogleConfig();
-  const state = Buffer.from(JSON.stringify({ propertyId })).toString("base64url");
+  const state = signGoogleOAuthState({ purpose: "google_drive_oauth", propertyId, schemaName, userId: user.id, tenantId: user.tenant_id });
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("client_id", env.GOOGLE_CLIENT_ID!);
   url.searchParams.set("redirect_uri", env.GOOGLE_REDIRECT_URI!);
@@ -45,6 +55,43 @@ export async function getAuthUrl(schemaName: string, propertyId: string) {
   url.searchParams.set("prompt", "consent");
   url.searchParams.set("state", state);
   return { url: url.toString(), scope: env.GOOGLE_DRIVE_SCOPE };
+}
+
+export async function completeOAuthCallback(code: string, state: string) {
+  const parsedState = verifyGoogleOAuthState(state);
+  await validateOAuthUser(parsedState);
+  await validateProperty(parsedState.schemaName, parsedState.propertyId);
+  const tokens = await exchangeCode(code);
+  const accessToken = tokens.access_token;
+  const refreshToken = tokens.refresh_token;
+  await query(
+    `insert into property_drive_integrations
+      (property_id, folder_id, folder_name, folder_url, connected_by, encrypted_access_token, encrypted_refresh_token, token_expires_at, is_active)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,true)
+     on conflict (property_id, provider) do update set
+      connected_by = excluded.connected_by,
+      connected_at = now(),
+      encrypted_access_token = coalesce(excluded.encrypted_access_token, property_drive_integrations.encrypted_access_token),
+      encrypted_refresh_token = coalesce(excluded.encrypted_refresh_token, property_drive_integrations.encrypted_refresh_token),
+      token_expires_at = coalesce(excluded.token_expires_at, property_drive_integrations.token_expires_at),
+      is_active = true
+     returning id`,
+    [
+      parsedState.propertyId,
+      "google_oauth_account",
+      "Cuenta Google Drive",
+      null,
+      parsedState.userId,
+      accessToken ? encryptSecret(accessToken) : null,
+      refreshToken ? encryptSecret(refreshToken) : null,
+      tokens.expires_in ? new Date(Date.now() + Number(tokens.expires_in) * 1000).toISOString() : null
+    ],
+    parsedState.schemaName
+  );
+  return {
+    propertyId: parsedState.propertyId,
+    redirectUrl: buildFrontendRedirect(parsedState.propertyId, "connected")
+  };
 }
 
 export async function connectFolder(schemaName: string, propertyId: string, userId: string, input: Record<string, unknown>) {
@@ -405,6 +452,54 @@ function ensureGoogleConfig() {
     err.status = 503;
     throw err;
   }
+}
+
+function signGoogleOAuthState(state: GoogleOAuthState) {
+  return jwt.sign(state, env.JWT_SECRET, { expiresIn: "15m" });
+}
+
+function verifyGoogleOAuthState(state: string) {
+  try {
+    const payload = jwt.verify(state, env.JWT_SECRET) as Partial<GoogleOAuthState>;
+    if (
+      payload.purpose !== "google_drive_oauth" ||
+      typeof payload.propertyId !== "string" ||
+      typeof payload.schemaName !== "string" ||
+      typeof payload.userId !== "string" ||
+      typeof payload.tenantId !== "string"
+    ) {
+      throw new Error("Estado OAuth invalido");
+    }
+    return payload as GoogleOAuthState;
+  } catch {
+    const err = new Error("Estado OAuth invalido o caducado") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+}
+
+async function validateOAuthUser(state: GoogleOAuthState) {
+  const user = await query(
+    `select u.id
+     from public.users u
+     join public.tenants t on t.id = u.tenant_id
+     where u.id = $1 and u.tenant_id = $2 and t.schema_name = $3 and u.active = true and u.role = 'admin'`,
+    [state.userId, state.tenantId, state.schemaName]
+  );
+  if (!user.rows[0]) {
+    const err = new Error("Usuario OAuth no autorizado") as Error & { status: number };
+    err.status = 403;
+    throw err;
+  }
+}
+
+export function buildFrontendRedirect(propertyId: string, status: "connected" | "error", message?: string) {
+  const baseUrl = env.FRONTEND_URL ?? "http://localhost:3000";
+  const url = new URL(`/properties/${propertyId}`, baseUrl);
+  url.searchParams.set("tab", "Drive");
+  url.searchParams.set("google", status);
+  if (message) url.searchParams.set("message", message);
+  return url.toString();
 }
 
 function parseFolderId(value: string) {
