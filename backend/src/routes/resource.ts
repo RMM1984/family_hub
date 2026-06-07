@@ -6,6 +6,8 @@ import type { AuthedRequest } from "../types.js";
 import * as crud from "../services/crudService.js";
 import * as monthlyExpenses from "../services/monthlyExpenseService.js";
 import * as finance from "../services/propertyFinanceService.js";
+import * as essentialDocuments from "../services/essentialDocumentService.js";
+import * as financing from "../services/propertyFinancingService.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -27,6 +29,12 @@ export function resourceRouter(table: "properties" | "expenses" | "income" | "do
     router.get("/:id/documents/grouped", async (req: AuthedRequest, res) => {
       res.json({ data: await finance.groupedDocuments(req.schemaName!, String(req.params.id), req.query.year) });
     });
+    router.get("/:id/documents/essential", async (req: AuthedRequest, res) => {
+      res.json({ data: await essentialDocuments.groupedEssentialDocuments(req.schemaName!, String(req.params.id), req.query.year) });
+    });
+    router.get("/:id/financing", async (req: AuthedRequest, res) => {
+      res.json({ data: await financing.groupedFinancing(req.schemaName!, String(req.params.id), req.query.year) });
+    });
     router.get("/:id/expenses/monthly", async (req: AuthedRequest, res) => {
       res.json({ data: await monthlyExpenses.getMonthlyExpenses(req.schemaName!, String(req.params.id), req.query.month) });
     });
@@ -35,6 +43,15 @@ export function resourceRouter(table: "properties" | "expenses" | "income" | "do
     });
     router.get("/:id/stats/monthly", async (req: AuthedRequest, res) => {
       res.json({ data: await monthlyExpenses.getMonthlyStats(req.schemaName!, String(req.params.id), req.query.year) });
+    });
+    router.post("/:id/financing", requireRole("admin"), async (req: AuthedRequest, res) => {
+      res.status(201).json({ data: await financing.createFinancing(req.schemaName!, String(req.params.id), req.body ?? {}) });
+    });
+    router.patch("/:id/financing/:paymentId", requireRole("admin"), async (req: AuthedRequest, res) => {
+      res.json({ data: await financing.updateFinancing(req.schemaName!, String(req.params.id), String(req.params.paymentId), req.body ?? {}) });
+    });
+    router.delete("/:id/financing/:paymentId", requireRole("admin"), async (req: AuthedRequest, res) => {
+      res.json({ data: await financing.deleteFinancing(req.schemaName!, String(req.params.id), String(req.params.paymentId)) });
     });
     router.post("/:id/expenses", requireRole("admin"), async (req: AuthedRequest, res) => {
       res.status(201).json({ data: await crud.createByProperty("expenses", req.schemaName!, String(req.params.id), req.body) });
@@ -55,10 +72,13 @@ export function resourceRouter(table: "properties" | "expenses" | "income" | "do
       res.json({ data: await crud.listByProperty("documents", req.schemaName!, String(req.params.id)) });
     });
     router.post("/:id/documents", requireRole("admin"), async (req: AuthedRequest, res) => {
-      res.status(201).json({ data: await crud.createByProperty("documents", req.schemaName!, String(req.params.id), req.body) });
+      res.status(201).json({ data: await essentialDocuments.createEssentialDocument(req.schemaName!, String(req.params.id), req.body ?? {}) });
     });
     router.patch("/:id/documents/:documentId", requireRole("admin"), async (req: AuthedRequest, res) => {
-      res.json({ data: await crud.update("documents", req.schemaName!, String(req.params.documentId), req.body) });
+      res.json({ data: await essentialDocuments.updateEssentialDocument(req.schemaName!, String(req.params.id), String(req.params.documentId), req.body ?? {}) });
+    });
+    router.delete("/:id/documents/:documentId", requireRole("admin"), async (req: AuthedRequest, res) => {
+      res.json({ data: await essentialDocuments.deleteEssentialDocument(req.schemaName!, String(req.params.id), String(req.params.documentId)) });
     });
     router.post("/:id/documents/:documentId/register-expense", requireRole("admin"), async (req: AuthedRequest, res) => {
       res.status(201).json({ data: await finance.registerDocumentExpense(req.schemaName!, String(req.params.id), String(req.params.documentId), req.body ?? {}) });

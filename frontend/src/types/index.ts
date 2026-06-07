@@ -48,7 +48,7 @@ export interface Expense {
 
 export interface MonthlyExpenseItem {
   id?: string | null;
-  category: "electricity" | "water" | "internet" | "cleaning" | "repairs";
+  category: "electricity" | "water" | "gas" | "internet" | "cleaning" | "supplies" | "maintenance" | "repairs" | "renovation" | "furniture" | "other";
   label: string;
   amount: number;
 }
@@ -64,7 +64,15 @@ export interface MonthlyProfitRow {
   label?: string;
   income_total: number;
   expense_total: number;
+  operating_expense_total?: number;
+  ordinary_cost_total?: number;
+  financing_interest_total?: number;
+  financing_principal_total?: number;
+  financing_total_payment?: number;
   net_profit: number;
+  operating_profit?: number;
+  profit_after_financing_cost?: number;
+  cashflow_after_financing?: number;
   expense_ratio?: number | null;
   profit_margin?: number | null;
   pending_income_count?: number;
@@ -182,11 +190,14 @@ export interface DocumentItem {
   property_id: string;
   type: string;
   subtype?: string;
+  document_type?: "ibi" | "home_insurance" | "garbage_tax" | "energy_certificate" | "occupancy_certificate" | "tourist_license" | "other_essential" | string;
+  document_category?: "essential" | "drive_inbox" | "operational_receipt" | "other";
   title: string;
   document_date?: string | null;
+  valid_until?: string | null;
   amount?: number | null;
   currency?: string | null;
-  status?: "pending_review" | "reviewed" | "linked" | "ignored";
+  status?: "pending_review" | "registered" | "reviewed" | "linked" | "ignored";
   source?: string | null;
   data_origin?: string | null;
   is_demo?: boolean;
@@ -207,8 +218,38 @@ export interface GroupedMonth<T> {
   income_total?: number;
   expense_total?: number;
   document_total?: number;
+  ordinary_cost_total?: number;
+  total_payment?: number;
+  interest_total?: number;
+  principal_total?: number;
+  outstanding_principal?: number | null;
   pending_amount_count?: number;
   items: T[];
+}
+
+export interface FinancingPayment {
+  id: string;
+  property_id: string;
+  payment_month: string;
+  payment_date: string;
+  lender?: string | null;
+  total_payment: number;
+  interest_amount: number;
+  principal_amount: number;
+  outstanding_principal?: number | null;
+  notes?: string | null;
+  linked_document_id?: string | null;
+  linked_document_title?: string | null;
+  is_demo?: boolean;
+}
+
+export interface GroupedFinancing {
+  year: number;
+  months: Array<GroupedMonth<FinancingPayment>>;
+  year_total_payment: number;
+  year_interest_total: number;
+  year_principal_total: number;
+  latest_outstanding_principal?: number | null;
 }
 
 export interface GroupedFinance<T> {

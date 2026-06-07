@@ -37,6 +37,8 @@ export const getPropertyExpenses = (id: string) => withFallback(() => api.get(`/
 export const getPropertyGroupedIncome = (id: string, year: number) => api.get(`/properties/${id}/income/grouped`, { params: { year } }).then((r) => r.data.data);
 export const getPropertyGroupedExpenses = (id: string, year: number) => api.get(`/properties/${id}/expenses/grouped`, { params: { year } }).then((r) => r.data.data);
 export const getPropertyGroupedDocuments = (id: string, year: number) => api.get(`/properties/${id}/documents/grouped`, { params: { year } }).then((r) => r.data.data);
+export const getPropertyEssentialDocuments = (id: string, year: number) => api.get(`/properties/${id}/documents/essential`, { params: { year } }).then((r) => r.data.data);
+export const getPropertyFinancing = (id: string, year: number) => api.get(`/properties/${id}/financing`, { params: { year } }).then((r) => r.data.data);
 export const getPropertyMonthlyExpenses = (id: string, month: string) => api.get(`/properties/${id}/expenses/monthly`, { params: { month } }).then((r) => r.data.data);
 export const savePropertyMonthlyExpenses = (id: string, data: Record<string, unknown>) => api.put(`/properties/${id}/expenses/monthly`, data).then((r) => r.data.data);
 export const getPropertyMonthlyStats = (id: string, year: number) => api.get(`/properties/${id}/stats/monthly`, { params: { year } }).then((r) => r.data.data);
@@ -47,6 +49,9 @@ export const createPropertyIncome = (id: string, data: Record<string, unknown>) 
 export const updatePropertyIncome = (propertyId: string, incomeId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/income/${incomeId}`, data).then((r) => r.data.data);
 export const createPropertyDocument = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/documents`, data).then((r) => r.data.data);
 export const updatePropertyDocument = (propertyId: string, documentId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/documents/${documentId}`, data).then((r) => r.data.data);
+export const createPropertyFinancing = (propertyId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/financing`, data).then((r) => r.data.data);
+export const updatePropertyFinancing = (propertyId: string, paymentId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/financing/${paymentId}`, data).then((r) => r.data.data);
+export const deletePropertyFinancing = (propertyId: string, paymentId: string) => api.delete(`/properties/${propertyId}/financing/${paymentId}`).then((r) => r.data.data);
 export const registerDocumentExpense = (propertyId: string, documentId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/documents/${documentId}/register-expense`, data).then((r) => r.data.data);
 export const registerDocumentIncome = (propertyId: string, documentId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/documents/${documentId}/register-income`, data).then((r) => r.data.data);
 export const updatePropertyOperation = (id: string, data: Record<string, unknown>) => api.patch(`/properties/${id}/operation`, data).then((r) => r.data.data);

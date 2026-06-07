@@ -1,15 +1,21 @@
 import { query } from "../config/db.js";
 import { validateProperty } from "./crudService.js";
 
-const monthlyCategories = ["electricity", "water", "internet", "cleaning", "repairs"] as const;
+const monthlyCategories = ["electricity", "water", "gas", "internet", "cleaning", "supplies", "maintenance", "repairs", "renovation", "furniture", "other"] as const;
 type MonthlyCategory = typeof monthlyCategories[number];
 
 const labels: Record<MonthlyCategory, string> = {
   electricity: "Luz",
   water: "Agua",
+  gas: "Gas",
   internet: "Internet",
   cleaning: "Limpieza",
-  repairs: "Reparaciones"
+  supplies: "Utiles",
+  maintenance: "Mantenimiento",
+  repairs: "Reparaciones",
+  renovation: "Reforma",
+  furniture: "Mobiliario",
+  other: "Otros"
 };
 
 export async function getMonthlyExpenses(schemaName: string, propertyId: string, monthInput: unknown) {
@@ -95,6 +101,35 @@ export async function getMonthlyStats(schemaName: string, propertyId: string, ye
        and coalesce(expense_month, expense_date) >= $2::date
        and coalesce(expense_month, expense_date) < ($2::date + interval '1 year')
        and coalesce(is_demo,false) = false
+       and category = any($3::text[])
+     group by 1`,
+    [propertyId, yearStart, monthlyCategories],
+    schemaName
+  );
+  const ordinaryCosts = await query(
+    `select to_char(date_trunc('month', coalesce(document_date, created_at::date)::timestamp), 'YYYY-MM') as month,
+            coalesce(sum(coalesce(amount, cost, 0)),0)::numeric as total
+     from documents
+     where property_id = $1
+       and coalesce(document_category, 'essential') = 'essential'
+       and coalesce(document_date, created_at::date) >= $2::date
+       and coalesce(document_date, created_at::date) < ($2::date + interval '1 year')
+       and coalesce(is_demo,false) = false
+       and coalesce(status, 'pending_review') <> 'ignored'
+     group by 1`,
+    [propertyId, yearStart],
+    schemaName
+  );
+  const financing = await query(
+    `select to_char(date_trunc('month', payment_month::timestamp), 'YYYY-MM') as month,
+            coalesce(sum(total_payment),0)::numeric as total_payment,
+            coalesce(sum(interest_amount),0)::numeric as interest_total,
+            coalesce(sum(principal_amount),0)::numeric as principal_total
+     from property_financing_payments
+     where property_id = $1
+       and payment_month >= $2::date
+       and payment_month < ($2::date + interval '1 year')
+       and coalesce(is_demo,false) = false
      group by 1`,
     [propertyId, yearStart],
     schemaName
@@ -118,20 +153,37 @@ export async function getMonthlyStats(schemaName: string, propertyId: string, ye
   );
   const incomeByMonth = new Map(income.rows.map((row: any) => [row.month, Number(row.total ?? 0)]));
   const expenseByMonth = new Map(expenses.rows.map((row: any) => [row.month, Number(row.total ?? 0)]));
+  const ordinaryByMonth = new Map(ordinaryCosts.rows.map((row: any) => [row.month, Number(row.total ?? 0)]));
+  const financingByMonth = new Map(financing.rows.map((row: any) => [row.month, row]));
   const pendingIncomeByMonth = new Map(pendingIncome.rows.map((row: any) => [row.month, Number(row.total ?? 0)]));
   const months = Array.from({ length: 12 }, (_, index) => {
     const month = `${year}-${String(index + 1).padStart(2, "0")}`;
     const incomeTotal = Number(incomeByMonth.get(month) ?? 0);
-    const expenseTotal = Number(expenseByMonth.get(month) ?? 0);
-    const netProfit = incomeTotal - expenseTotal;
+    const operatingExpenseTotal = Number(expenseByMonth.get(month) ?? 0);
+    const ordinaryCostTotal = Number(ordinaryByMonth.get(month) ?? 0);
+    const financingRow: any = financingByMonth.get(month) ?? {};
+    const financingInterestTotal = Number(financingRow.interest_total ?? 0);
+    const financingPrincipalTotal = Number(financingRow.principal_total ?? 0);
+    const financingTotalPayment = Number(financingRow.total_payment ?? 0);
+    const operatingProfit = incomeTotal - operatingExpenseTotal - ordinaryCostTotal;
+    const profitAfterFinancingCost = operatingProfit - financingInterestTotal;
+    const cashflowAfterFinancing = operatingProfit - financingTotalPayment;
     return {
       month,
       label: monthLabel(month),
       income_total: incomeTotal,
-      expense_total: expenseTotal,
-      net_profit: netProfit,
-      expense_ratio: incomeTotal > 0 ? roundPercent(expenseTotal / incomeTotal) : null,
-      profit_margin: incomeTotal > 0 ? roundPercent(netProfit / incomeTotal) : null,
+      expense_total: operatingExpenseTotal,
+      operating_expense_total: operatingExpenseTotal,
+      ordinary_cost_total: ordinaryCostTotal,
+      financing_interest_total: financingInterestTotal,
+      financing_principal_total: financingPrincipalTotal,
+      financing_total_payment: financingTotalPayment,
+      net_profit: operatingProfit,
+      operating_profit: operatingProfit,
+      profit_after_financing_cost: profitAfterFinancingCost,
+      cashflow_after_financing: cashflowAfterFinancing,
+      expense_ratio: incomeTotal > 0 ? roundPercent((operatingExpenseTotal + ordinaryCostTotal) / incomeTotal) : null,
+      profit_margin: incomeTotal > 0 ? roundPercent(operatingProfit / incomeTotal) : null,
       pending_income_count: Number(pendingIncomeByMonth.get(month) ?? 0)
     };
   });

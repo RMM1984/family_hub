@@ -406,24 +406,31 @@ export async function saveDocumentFromFile(schemaName: string, propertyId: strin
     err.status = 400;
     throw err;
   }
-  const rawType = String(input.type ?? "otro").trim();
+  const rawType = String(input.document_type ?? input.type ?? "other_essential").trim();
+  const documentType = normalizeEssentialDocumentType(rawType);
+  const validUntil = input.valid_until ?? input.expiration_date;
   const existing = await query("select id from documents where property_id = $1 and drive_file_id = $2", [propertyId, file.id], schemaName);
   if (existing.rows[0]) {
     const updated = await query(
       `update documents
        set type = $1,
            subtype = $2,
+           document_type = $2,
+           document_category = 'essential',
            title = $3,
            expiration_date = $4,
+           valid_until = $4,
            file_url = $5,
-           notes = $6
+           notes = $6,
+           status = 'linked',
+           updated_at = now()
        where property_id = $7 and id = $8
        returning *`,
       [
-        normalizeDocumentRecordType(rawType),
-        rawType,
+        documentType,
+        documentType,
         title,
-        input.expiration_date ? String(input.expiration_date) : null,
+        validUntil ? String(validUntil) : null,
         file.web_view_link ?? null,
         input.notes ? String(input.notes) : null,
         propertyId,
@@ -436,15 +443,14 @@ export async function saveDocumentFromFile(schemaName: string, propertyId: strin
   }
   const result = await query(
     `insert into documents
-      (property_id, type, subtype, title, expiration_date, file_url, notes, details, drive_file_id)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      (property_id, type, subtype, document_type, document_category, title, expiration_date, valid_until, file_url, notes, details, drive_file_id, status, source, source_provider, source_method, data_origin)
+     values ($1,$2,$2,$2,'essential',$3,$4,$4,$5,$6,$7,$8,'linked','google_drive','google_drive','drive_inbox','google_drive')
      returning *`,
     [
       propertyId,
-      normalizeDocumentRecordType(rawType),
-      rawType,
+      documentType,
       title,
-      input.expiration_date ? String(input.expiration_date) : null,
+      validUntil ? String(validUntil) : null,
       file.web_view_link ?? null,
       input.notes ? String(input.notes) : null,
       JSON.stringify({ source: "google_drive", drive_file_id: file.id, drive_file_name: file.name }),
@@ -831,6 +837,29 @@ function normalizeDocumentRecordType(value: unknown) {
   };
   const normalized = aliases[raw] ?? raw;
   return ["insurance", "license", "certificate", "inspection", "contract", "warranty", "deed", "other"].includes(normalized) ? normalized : "other";
+}
+
+function normalizeEssentialDocumentType(value: unknown) {
+  const raw = String(value ?? "").toLowerCase().trim();
+  const aliases: Record<string, string> = {
+    seguro: "home_insurance",
+    insurance: "home_insurance",
+    home_insurance: "home_insurance",
+    basuras: "garbage_tax",
+    garbage_tax: "garbage_tax",
+    certificado: "energy_certificate",
+    certificate: "energy_certificate",
+    energy_certificate: "energy_certificate",
+    cedula: "occupancy_certificate",
+    occupancy_certificate: "occupancy_certificate",
+    licencia: "tourist_license",
+    tourist_license: "tourist_license",
+    ibi: "ibi",
+    other_essential: "other_essential",
+    otro: "other_essential"
+  };
+  const normalized = aliases[raw] ?? raw;
+  return ["ibi","home_insurance","garbage_tax","energy_certificate","occupancy_certificate","tourist_license","other_essential"].includes(normalized) ? normalized : "other_essential";
 }
 
 async function fetchDriveFolder(accessToken: string, folderId: string) {

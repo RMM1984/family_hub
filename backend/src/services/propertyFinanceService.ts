@@ -28,8 +28,9 @@ export async function groupedExpenses(schemaName: string, propertyId: string, ye
        and expense_date >= $2::date
        and expense_date < ($2::date + interval '1 year')
        and coalesce(is_demo,false) = false
+       and category = any($3::text[])
      order by expense_date asc, created_at asc`,
-    [propertyId, `${year}-01-01`],
+    [propertyId, `${year}-01-01`, ["electricity","water","gas","internet","cleaning","supplies","maintenance","repairs","renovation","furniture","other"]],
     schemaName
   );
   return groupRows(year, result.rows, "expense_date", "expense_total", () => true);
@@ -42,6 +43,7 @@ export async function groupedDocuments(schemaName: string, propertyId: string, y
     `select *
      from documents
      where property_id = $1
+       and coalesce(document_category, 'essential') = 'essential'
        and coalesce(document_date, created_at::date) >= $2::date
        and coalesce(document_date, created_at::date) < ($2::date + interval '1 year')
        and coalesce(is_demo,false) = false

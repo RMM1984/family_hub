@@ -9,16 +9,19 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   createDriveFolder,
+  createPropertyFinancing,
   createPropertyDocument,
   createPropertyExpense,
   createPropertyIncome,
   createReservationIncome,
   deleteDriveFolder,
+  deletePropertyFinancing,
   disconnectPropertyAirbnb,
   disconnectPropertyDrive,
   applyAirbnbEarningsImport,
   getAvailableDriveFolders,
-  getPropertyGroupedDocuments,
+  getPropertyEssentialDocuments,
+  getPropertyFinancing,
   getPropertyGroupedExpenses,
   getPropertyGroupedIncome,
   importAirbnbEarningsCsv,
@@ -46,6 +49,7 @@ import {
   syncPropertyDrive,
   updateDriveFile,
   updateDriveFolder,
+  updatePropertyFinancing,
   updatePropertyDocument,
   updatePropertyIncome,
   updatePropertyOperation,
@@ -54,9 +58,9 @@ import {
   updateReservationGuestCount
 } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/format";
-import type { AirbnbEarningsImport, AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, GroupedFinance, Income, MonthlyExpenseState, MonthlyProfitStats, Property, Reservation } from "@/types";
+import type { AirbnbEarningsImport, AirbnbStats, AvailableDriveFolder, DocumentItem, DriveFile, DriveFolderMapping, DriveState, Expense, FinancingPayment, GroupedFinance, GroupedFinancing, Income, MonthlyExpenseState, MonthlyProfitStats, Property, Reservation } from "@/types";
 
-type Tab = "Resumen" | "Reservas" | "Contrato / Renta" | "Ingresos" | "Gastos" | "Documentos / Drive" | "Estadisticas";
+type Tab = "Resumen" | "Reservas" | "Contrato / Renta" | "Ingresos" | "Gastos" | "Documentos" | "Financiacion" | "Estadisticas";
 
 export default function PropertyDetailPage() {
   const params = useParams<{ id: string }>();
@@ -64,7 +68,7 @@ export default function PropertyDetailPage() {
   const propertyId = params.id;
   const queryClient = useQueryClient();
   const requestedTab = searchParams.get("tab");
-  const [tab, setTab] = useState<Tab>(requestedTab === "Drive" ? "Documentos / Drive" : requestedTab === "Reservas" ? "Reservas" : "Resumen");
+  const [tab, setTab] = useState<Tab>(requestedTab === "Drive" || requestedTab === "Documentos / Drive" || requestedTab === "Documentos" ? "Documentos" : requestedTab === "Reservas" ? "Reservas" : requestedTab === "Financiacion" ? "Financiacion" : "Resumen");
   const [showDemoData, setShowDemoData] = useState(false);
   const [incomeFilter, setIncomeFilter] = useState("todos");
   const [earningsImport, setEarningsImport] = useState<AirbnbEarningsImport | null>(null);
@@ -82,7 +86,8 @@ export default function PropertyDetailPage() {
   const { data: monthlyExpenses } = useQuery<MonthlyExpenseState>({ queryKey: ["property-monthly-expenses", propertyId, expenseMonth], queryFn: () => getPropertyMonthlyExpenses(propertyId, expenseMonth) });
   const { data: monthlyStats } = useQuery<MonthlyProfitStats>({ queryKey: ["property-monthly-stats", propertyId, Number(expenseMonth.slice(0, 4))], queryFn: () => getPropertyMonthlyStats(propertyId, Number(expenseMonth.slice(0, 4))) });
   const { data: documents = [] } = useQuery<DocumentItem[]>({ queryKey: ["property-documents", propertyId], queryFn: () => getPropertyDocuments(propertyId) });
-  const { data: groupedDocuments } = useQuery<GroupedFinance<DocumentItem>>({ queryKey: ["property-grouped-documents", propertyId, financeYear], queryFn: () => getPropertyGroupedDocuments(propertyId, financeYear) });
+  const { data: groupedDocuments } = useQuery<GroupedFinance<DocumentItem>>({ queryKey: ["property-essential-documents", propertyId, financeYear], queryFn: () => getPropertyEssentialDocuments(propertyId, financeYear) });
+  const { data: financing } = useQuery<GroupedFinancing>({ queryKey: ["property-financing", propertyId, financeYear], queryFn: () => getPropertyFinancing(propertyId, financeYear) });
   const { data: drive } = useQuery<DriveState>({ queryKey: ["property-drive", propertyId], queryFn: () => getPropertyDrive(propertyId) });
   const {
     data: availableDriveFolders = [],
@@ -106,6 +111,13 @@ export default function PropertyDetailPage() {
     const totalIncome = realIncome.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
     const paidNights = realIncome.reduce((sum, item) => sum + Number(item.nights ?? 0), 0);
     const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+    const ordinaryExpenses = documents
+      .filter((document) => !document.is_demo && (document.document_category ?? "essential") === "essential" && document.status !== "ignored")
+      .reduce((sum, document) => sum + Number(document.amount ?? document.cost ?? 0), 0);
+    const financingItems = financing?.months.flatMap((month) => month.items) ?? [];
+    const financingInterest = financingItems.reduce((sum, item) => sum + Number(item.interest_amount ?? 0), 0);
+    const financingPrincipal = financingItems.reduce((sum, item) => sum + Number(item.principal_amount ?? 0), 0);
+    const financingTotal = financingItems.reduce((sum, item) => sum + Number(item.total_payment ?? 0), 0);
     const categoryTotals = expenses.reduce<Record<string, number>>((acc, item) => {
       acc[item.category] = (acc[item.category] ?? 0) + Number(item.amount ?? 0);
       return acc;
@@ -121,7 +133,7 @@ export default function PropertyDetailPage() {
     const mostRepeatedGuests = Object.entries(guestFrequency)
       .sort((a, b) => Number(b[1]) - Number(a[1]) || Number(a[0]) - Number(b[0]))[0];
     const investmentBase = Number(property?.initial_investment ?? 0) + Number(property?.reform_cost ?? 0);
-    const net = totalIncome - totalExpenses;
+    const net = totalIncome - totalExpenses - ordinaryExpenses;
     return {
       totalIncome,
       totalExpenses,
@@ -135,15 +147,17 @@ export default function PropertyDetailPage() {
       roiPercent: investmentBase > 0 ? (net / investmentBase) * 100 : null,
       operationalExpenses: sumCategories(["electricity", "water", "gas", "internet"]),
       cleaningSuppliesSupermarket: sumCategories(["cleaning", "supplies", "supermarket"]),
-      ordinaryExpenses: sumCategories(["ibi", "garbage", "home_insurance", "liability_insurance", "rental_insurance"]),
-      financingExpenses: sumCategories(["mortgage", "financing", "loan_interest"]),
+      ordinaryExpenses,
+      financingExpenses: financingInterest,
+      financingPrincipal,
+      financingTotal,
       repairsExpenses: sumCategories(["maintenance", "repairs"]),
       categoryTotals
     };
-  }, [income, expenses, reservations, property?.initial_investment, property?.reform_cost]);
+  }, [income, expenses, documents, financing, reservations, property?.initial_investment, property?.reform_cost]);
   const tabs: Tab[] = showAirbnb
-    ? ["Resumen", "Reservas", "Ingresos", "Gastos", "Documentos / Drive", "Estadisticas"]
-    : ["Resumen", "Contrato / Renta", "Ingresos", "Gastos", "Documentos / Drive", "Estadisticas"];
+    ? ["Resumen", "Reservas", "Ingresos", "Gastos", "Documentos", "Financiacion", "Estadisticas"]
+    : ["Resumen", "Contrato / Renta", "Ingresos", "Gastos", "Documentos", "Financiacion", "Estadisticas"];
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["property", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-income", propertyId] });
@@ -156,6 +170,8 @@ export default function PropertyDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["property-monthly-stats", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-documents", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["property-grouped-documents", propertyId] });
+    queryClient.invalidateQueries({ queryKey: ["property-essential-documents", propertyId] });
+    queryClient.invalidateQueries({ queryKey: ["property-financing", propertyId] });
     queryClient.invalidateQueries({ queryKey: ["properties"] });
     queryClient.invalidateQueries({ queryKey: ["dashboard"] });
   };
@@ -187,6 +203,9 @@ export default function PropertyDetailPage() {
   const reservationUpdateMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updatePropertyReservation(propertyId, reservationId, data), onSuccess: refresh });
   const documentMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyDocument(propertyId, data), onSuccess: refresh });
   const documentUpdateMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: string; data: Record<string, unknown> }) => updatePropertyDocument(propertyId, documentId, data), onSuccess: refresh });
+  const financingMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyFinancing(propertyId, data), onSuccess: refresh });
+  const financingUpdateMutation = useMutation({ mutationFn: ({ paymentId, data }: { paymentId: string; data: Record<string, unknown> }) => updatePropertyFinancing(propertyId, paymentId, data), onSuccess: refresh });
+  const financingDeleteMutation = useMutation({ mutationFn: (paymentId: string) => deletePropertyFinancing(propertyId, paymentId), onSuccess: refresh });
   const documentExpenseMutation = useMutation({ mutationFn: (documentId: string) => registerDocumentExpense(propertyId, documentId, {}), onSuccess: refresh });
   const documentIncomeMutation = useMutation({ mutationFn: (documentId: string) => registerDocumentIncome(propertyId, documentId, {}), onSuccess: refresh });
   const refreshDrive = () => queryClient.invalidateQueries({ queryKey: ["property-drive", propertyId] });
@@ -337,8 +356,12 @@ export default function PropertyDetailPage() {
         </section>
       )}
 
-      {tab === "Documentos / Drive" && (
+      {tab === "Documentos" && (
         <section className="space-y-5">
+          <div>
+            <h3 className="font-bold">Documentos esenciales</h3>
+            <p className="text-sm text-slate-500">IBI, seguros, basuras, certificados, cedula y licencia turistica se gestionan aqui, separados de gastos operativos.</p>
+          </div>
           <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
             <DocumentForm pending={documentMutation.isPending} onSubmit={(data) => documentMutation.mutate(data)} />
             <section className="space-y-3">
@@ -347,14 +370,17 @@ export default function PropertyDetailPage() {
               </Card>
               <GroupedDocumentView
                 data={groupedDocuments}
-                pending={documentExpenseMutation.isPending || documentIncomeMutation.isPending || documentUpdateMutation.isPending}
+                pending={documentUpdateMutation.isPending}
                 onUpdate={(documentId, data) => documentUpdateMutation.mutate({ documentId, data })}
-                onRegisterExpense={(documentId) => documentExpenseMutation.mutate(documentId)}
-                onRegisterIncome={(documentId) => documentIncomeMutation.mutate(documentId)}
               />
             </section>
           </section>
           {drive && (
+            <section className="space-y-3">
+              <div>
+                <h3 className="font-bold">Bandeja Drive</h3>
+                <p className="text-sm text-slate-500">Revisa archivos nuevos de Drive y clasificalos como gasto operativo o documento esencial.</p>
+              </div>
             <DrivePanel
               drive={drive}
               availableDriveFolders={availableDriveFolders}
@@ -382,7 +408,26 @@ export default function PropertyDetailPage() {
               onRegisterExpense={(fileId, data) => driveRegisterExpenseMutation.mutate({ fileId, data })}
               onSaveDocument={(fileId, data) => driveSaveDocumentMutation.mutate({ fileId, data })}
             />
+            </section>
           )}
+        </section>
+      )}
+
+      {tab === "Financiacion" && (
+        <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
+          <FinancingForm pending={financingMutation.isPending} documents={documents.filter((document) => document.document_category !== "operational_receipt")} onSubmit={(data) => financingMutation.mutate(data)} />
+          <section className="space-y-3">
+            <Card className="p-4">
+              <YearSelector year={financeYear} onChange={setFinanceYear} />
+            </Card>
+            <GroupedFinancingView
+              data={financing}
+              pending={financingUpdateMutation.isPending || financingDeleteMutation.isPending}
+              documents={documents}
+              onUpdate={(paymentId, data) => financingUpdateMutation.mutate({ paymentId, data })}
+              onDelete={(paymentId) => financingDeleteMutation.mutate(paymentId)}
+            />
+          </section>
         </section>
       )}
 
@@ -402,8 +447,10 @@ export default function PropertyDetailPage() {
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <ExpenseStat title="Gastos operativos" subtitle="Luz, agua, gas e internet" amount={profitabilityStats.operationalExpenses} />
             <ExpenseStat title="Limpieza y compras" subtitle="Limpieza, utiles y supermercado" amount={profitabilityStats.cleaningSuppliesSupermarket} />
-            <ExpenseStat title="Gastos ordinarios" subtitle="IBI, basuras y seguros" amount={profitabilityStats.ordinaryExpenses} />
-            <ExpenseStat title="Gastos de financiacion" subtitle="Hipoteca, financiacion e intereses" amount={profitabilityStats.financingExpenses} />
+            <ExpenseStat title="Costes ordinarios" subtitle="IBI, basuras, seguros, certificados y licencias" amount={profitabilityStats.ordinaryExpenses} />
+            <ExpenseStat title="Financiacion - intereses" subtitle="Coste financiero de hipoteca" amount={profitabilityStats.financingExpenses} />
+            <ExpenseStat title="Financiacion - amortizacion" subtitle="Capital amortizado, separado del gasto" amount={profitabilityStats.financingPrincipal} />
+            <ExpenseStat title="Cashflow tras financiacion" subtitle="Beneficio operativo menos cuota total" amount={profitabilityStats.net - profitabilityStats.financingTotal} />
             <ExpenseStat title="Reparaciones" subtitle="Mantenimiento y reparaciones" amount={profitabilityStats.repairsExpenses} />
             <ExpenseStat title="Documentos activos" subtitle="Documentos registrados en esta vivienda" amount={documents.length} plain />
           </section>
@@ -762,15 +809,11 @@ function GroupedExpenseView({ data }: { data?: GroupedFinance<Expense> }) {
 function GroupedDocumentView({
   data,
   pending,
-  onUpdate,
-  onRegisterExpense,
-  onRegisterIncome
+  onUpdate
 }: {
   data?: GroupedFinance<DocumentItem>;
   pending: boolean;
   onUpdate: (documentId: string, data: Record<string, unknown>) => void;
-  onRegisterExpense: (documentId: string) => void;
-  onRegisterIncome: (documentId: string) => void;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const months = (data?.months ?? []).filter((month) => month.items.length > 0);
@@ -785,15 +828,13 @@ function GroupedDocumentView({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-semibold">{item.title}</p>
-                  <p className="text-sm text-slate-500">{labelDocumentType(item.type)} · {formatDate(item.document_date)} · vence {formatDate(item.expiration_date)} · {labelDocumentStatus(item.status)}</p>
+                  <p className="text-sm text-slate-500">{labelDocumentType(item.document_type ?? item.type)} · Fecha documento: {formatDate(item.document_date)} · Vigencia: {formatDate(item.valid_until ?? item.expiration_date)} · Organismo: {item.provider ?? "-"} · {labelDocumentStatus(item.status)}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-bold">{formatCurrency(item.amount ?? item.cost)}</p>
                   <Button disabled={pending} onClick={() => setEditingId(editingId === item.id ? null : item.id)} className="bg-white text-ink hover:bg-slate-50">
                     {editingId === item.id ? "Cancelar" : "Editar"}
                   </Button>
-                  {!item.linked_expense_id && <Button disabled={pending} onClick={() => onRegisterExpense(item.id)} className="bg-white text-ink hover:bg-slate-50">Registrar gasto</Button>}
-                  {!item.linked_income_id && <Button disabled={pending} onClick={() => onRegisterIncome(item.id)} className="bg-white text-meadow hover:bg-slate-50">Registrar ingreso</Button>}
                 </div>
               </div>
               {editingId === item.id && (
@@ -1282,8 +1323,11 @@ function DriveFileCard({
     const form = new FormData(event.currentTarget);
     onSaveDocument(file.id, {
       title: String(form.get("title") ?? file.name),
-      type: String(form.get("type") ?? "otro"),
-      expiration_date: String(form.get("expiration_date") ?? ""),
+      type: String(form.get("document_type") ?? "other_essential"),
+      document_type: String(form.get("document_type") ?? "other_essential"),
+      document_category: "essential",
+      valid_until: String(form.get("valid_until") ?? ""),
+      expiration_date: String(form.get("valid_until") ?? ""),
       notes: String(form.get("notes") ?? "")
     });
   }
@@ -1333,7 +1377,7 @@ function DriveFileCard({
           </label>
           <label className="block">
             <span className="mb-1 block text-sm font-medium">Categoria general</span>
-            <select name="category" defaultValue="otros" className="h-10 w-full rounded-md border border-slate-300 px-3">
+            <select name="category" defaultValue="other" className="h-10 w-full rounded-md border border-slate-300 px-3">
               {expenseInboxCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </label>
@@ -1349,13 +1393,13 @@ function DriveFileCard({
           </label>
           <label className="block">
             <span className="mb-1 block text-sm font-medium">Tipo de documento</span>
-            <select name="type" defaultValue="otro" className="h-10 w-full rounded-md border border-slate-300 px-3">
-              {documentInboxTypes.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            <select name="document_type" defaultValue="other_essential" className="h-10 w-full rounded-md border border-slate-300 px-3">
+              {essentialDocumentTypes().map((item) => <option key={item} value={item}>{labelDocumentType(item)}</option>)}
             </select>
           </label>
           <label className="block">
             <span className="mb-1 block text-sm font-medium">Vencimiento opcional</span>
-            <input name="expiration_date" type="date" className="h-10 w-full rounded-md border border-slate-300 px-3" />
+            <input name="valid_until" type="date" className="h-10 w-full rounded-md border border-slate-300 px-3" />
           </label>
           <label className="block">
             <span className="mb-1 block text-sm font-medium">Notas</span>
@@ -1389,27 +1433,17 @@ function DriveFileCard({
 }
 
 const expenseInboxCategories = [
-  { value: "suministros", label: "Suministros" },
-  { value: "comunidad", label: "Comunidad" },
-  { value: "seguro", label: "Seguro" },
-  { value: "impuestos", label: "Impuestos" },
-  { value: "mantenimiento", label: "Mantenimiento" },
-  { value: "reforma", label: "Reforma" },
-  { value: "limpieza", label: "Limpieza" },
-  { value: "mobiliario", label: "Mobiliario" },
-  { value: "hipoteca", label: "Hipoteca" },
-  { value: "otros", label: "Otros" }
-];
-
-const documentInboxTypes = [
-  { value: "contrato", label: "Contrato" },
-  { value: "seguro", label: "Seguro" },
-  { value: "IBI", label: "IBI" },
-  { value: "comunidad", label: "Comunidad" },
-  { value: "certificado", label: "Certificado" },
-  { value: "garantia", label: "Garantia" },
-  { value: "manual", label: "Manual" },
-  { value: "otro", label: "Otro" }
+  { value: "electricity", label: "Luz" },
+  { value: "water", label: "Agua" },
+  { value: "gas", label: "Gas" },
+  { value: "internet", label: "Internet" },
+  { value: "cleaning", label: "Limpieza" },
+  { value: "supplies", label: "Utiles" },
+  { value: "maintenance", label: "Mantenimiento" },
+  { value: "repairs", label: "Reparaciones" },
+  { value: "renovation", label: "Reforma" },
+  { value: "furniture", label: "Mobiliario" },
+  { value: "other", label: "Otros" }
 ];
 
 function reviewStatusClasses(value?: string | null) {
@@ -1451,6 +1485,12 @@ function labelReviewStatus(value?: string | null) {
 
 function labelDocumentType(value?: string | null) {
   const labels: Record<string, string> = {
+    home_insurance: "Seguro hogar",
+    garbage_tax: "Basuras",
+    energy_certificate: "Certificado energetico",
+    occupancy_certificate: "Cedula de habitabilidad",
+    tourist_license: "Licencia turistica",
+    other_essential: "Otro documento esencial",
     factura: "Factura",
     contrato: "Contrato",
     seguro: "Seguro",
@@ -1469,6 +1509,10 @@ function labelDocumentType(value?: string | null) {
     other: "Otro"
   };
   return labels[String(value ?? "")] ?? "Sin clasificar";
+}
+
+function essentialDocumentTypes() {
+  return ["ibi", "home_insurance", "garbage_tax", "energy_certificate", "occupancy_certificate", "tourist_license", "other_essential"];
 }
 
 function labelDocumentStatus(value?: string | null) {
@@ -1640,15 +1684,19 @@ function MonthlyProfitPanel({ stats }: { stats?: MonthlyProfitStats }) {
     <Card className="p-5">
       <div className="mb-4">
         <h3 className="font-bold">Rentabilidad por mes</h3>
-        <p className="text-sm text-slate-500">Ingresos reales menos gastos registrados por mes.</p>
+        <p className="text-sm text-slate-500">Ingresos, gastos operativos, costes ordinarios y financiacion separados por mes.</p>
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
         {months.map((item) => (
           <div key={item.month} className={`rounded-md border p-3 ${monthlyProfitTone(item.net_profit)}`}>
             <p className="text-xs font-semibold uppercase">{shortMonthLabel(item.month)}</p>
-            <p className="mt-2 text-lg font-bold">{formatCurrency(item.net_profit)}</p>
+            <p className="mt-2 text-lg font-bold">{formatCurrency(item.operating_profit ?? item.net_profit)}</p>
             <p className="mt-1 text-xs">Ing. {formatCurrency(item.income_total)}</p>
-            <p className="text-xs">Gas. {formatCurrency(item.expense_total)}</p>
+            <p className="text-xs">G. op. {formatCurrency(item.operating_expense_total ?? item.expense_total)}</p>
+            <p className="text-xs">Ord. {formatCurrency(item.ordinary_cost_total ?? 0)}</p>
+            <p className="text-xs">Intereses {formatCurrency(item.financing_interest_total ?? 0)}</p>
+            <p className="text-xs">Amort. {formatCurrency(item.financing_principal_total ?? 0)}</p>
+            <p className="text-xs font-semibold">Cashflow {formatCurrency(item.cashflow_after_financing ?? item.net_profit)}</p>
             <p className="text-xs">Ratio {item.expense_ratio === null || item.expense_ratio === undefined ? "-" : `${item.expense_ratio}%`}</p>
             <p className="text-xs">Pend. {item.pending_income_count ?? 0}</p>
           </div>
@@ -1709,9 +1757,15 @@ function monthlyExpenseDefaults(): MonthlyExpenseState["items"] {
   return [
     { category: "electricity", label: "Luz", amount: 0 },
     { category: "water", label: "Agua", amount: 0 },
+    { category: "gas", label: "Gas", amount: 0 },
     { category: "internet", label: "Internet", amount: 0 },
     { category: "cleaning", label: "Limpieza", amount: 0 },
-    { category: "repairs", label: "Reparaciones", amount: 0 }
+    { category: "supplies", label: "Utiles", amount: 0 },
+    { category: "maintenance", label: "Mantenimiento", amount: 0 },
+    { category: "repairs", label: "Reparaciones", amount: 0 },
+    { category: "renovation", label: "Reforma", amount: 0 },
+    { category: "furniture", label: "Mobiliario", amount: 0 },
+    { category: "other", label: "Otros", amount: 0 }
   ];
 }
 
@@ -1845,18 +1899,182 @@ function IncomeForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data: 
   return <SimpleForm title="Nuevo ingreso" pending={pending} fields={["guest_name", "amount", "income_date", "check_in", "check_out", "nights"]} labels={["Huesped", "Importe", "Fecha ingreso", "Entrada", "Salida", "Noches"]} defaults={{ source: "airbnb" }} onSubmit={onSubmit} />;
 }
 
+function FinancingForm({ pending, documents, onSubmit }: { pending: boolean; documents: DocumentItem[]; onSubmit: (data: Record<string, unknown>) => void }) {
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    onSubmit(readFinancingForm(form));
+    event.currentTarget.reset();
+  }
+  return (
+    <Card className="p-5">
+      <h3 className="mb-4 font-bold">Nuevo recibo de hipoteca</h3>
+      <form onSubmit={submit} className="grid gap-3">
+        <FinancingFields documents={documents} />
+        <Button disabled={pending} className="bg-ink">Guardar financiacion</Button>
+      </form>
+    </Card>
+  );
+}
+
+function GroupedFinancingView({
+  data,
+  pending,
+  documents,
+  onUpdate,
+  onDelete
+}: {
+  data?: GroupedFinancing;
+  pending: boolean;
+  documents: DocumentItem[];
+  onUpdate: (paymentId: string, data: Record<string, unknown>) => void;
+  onDelete: (paymentId: string) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const months = (data?.months ?? []).filter((month) => month.items.length > 0);
+  return (
+    <section className="space-y-3">
+      <Card className="grid gap-3 p-4 md:grid-cols-4">
+        <StatLine label="Cuotas año" value={formatCurrency(data?.year_total_payment ?? 0)} />
+        <StatLine label="Intereses año" value={formatCurrency(data?.year_interest_total ?? 0)} />
+        <StatLine label="Amortizacion año" value={formatCurrency(data?.year_principal_total ?? 0)} />
+        <StatLine label="Capital pendiente" value={data?.latest_outstanding_principal === null || data?.latest_outstanding_principal === undefined ? "-" : formatCurrency(data.latest_outstanding_principal)} />
+      </Card>
+      {months.map((month) => (
+        <Card key={month.month} className="overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-4">
+            <h3 className="font-bold capitalize">{month.label}</h3>
+            <p className="text-sm font-semibold text-slate-600">Cuota total: <span className="text-ink">{formatCurrency(month.total_payment ?? 0)}</span></p>
+          </div>
+          {month.items.map((item) => (
+            <div key={item.id} className="border-b border-slate-200 p-4 last:border-b-0">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold">{item.lender ?? "Hipoteca"}</p>
+                  <p className="text-sm text-slate-500">
+                    Fecha recibo: {formatDate(item.payment_date)} · Intereses: {formatCurrency(item.interest_amount)} · Amortizacion: {formatCurrency(item.principal_amount)} · Capital pendiente: {item.outstanding_principal === null || item.outstanding_principal === undefined ? "-" : formatCurrency(item.outstanding_principal)}
+                  </p>
+                  {item.notes && <p className="mt-1 text-sm text-slate-500">{item.notes}</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <p className="font-bold">{formatCurrency(item.total_payment)}</p>
+                  <Button disabled={pending} onClick={() => setEditingId(editingId === item.id ? null : item.id)} className="bg-white text-ink hover:bg-slate-50">{editingId === item.id ? "Cancelar" : "Editar"}</Button>
+                  <Button disabled={pending} onClick={() => onDelete(item.id)} className="bg-white text-red-700 hover:bg-red-50">Eliminar</Button>
+                </div>
+              </div>
+              {editingId === item.id && (
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    onUpdate(item.id, readFinancingForm(new FormData(event.currentTarget)));
+                    setEditingId(null);
+                  }}
+                  className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4"
+                >
+                  <FinancingFields item={item} documents={documents} />
+                  <div className="flex gap-2">
+                    <Button disabled={pending} className="bg-ink">Guardar cambios</Button>
+                    <Button type="button" disabled={pending} onClick={() => setEditingId(null)} className="bg-white text-ink hover:bg-slate-50">Cancelar</Button>
+                  </div>
+                </form>
+              )}
+            </div>
+          ))}
+        </Card>
+      ))}
+      {months.length === 0 && <Card className="p-5 text-sm text-slate-500">No hay recibos de financiacion para este año.</Card>}
+    </section>
+  );
+}
+
+function FinancingFields({ item, documents }: { item?: FinancingPayment; documents: DocumentItem[] }) {
+  return (
+    <>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Mes</span>
+        <input name="payment_month" type="month" required defaultValue={item?.payment_month ? dateInputValue(item.payment_month).slice(0, 7) : currentMonthKey()} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Fecha recibo</span>
+        <input name="payment_date" type="date" required defaultValue={dateInputValue(item?.payment_date)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Banco / entidad</span>
+        <input name="lender" defaultValue={item?.lender ?? ""} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Cuota total</span>
+        <input name="total_payment" inputMode="decimal" required defaultValue={moneyInputValue(item?.total_payment)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Intereses / coste financiero</span>
+        <input name="interest_amount" inputMode="decimal" required defaultValue={moneyInputValue(item?.interest_amount)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Amortizacion de capital</span>
+        <input name="principal_amount" inputMode="decimal" required defaultValue={moneyInputValue(item?.principal_amount)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Capital pendiente</span>
+        <input name="outstanding_principal" inputMode="decimal" defaultValue={moneyInputValue(item?.outstanding_principal)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Documento asociado</span>
+        <select name="linked_document_id" defaultValue={item?.linked_document_id ?? ""} className="h-10 w-full rounded-md border border-slate-300 px-3">
+          <option value="">Sin documento</option>
+          {documents.map((document) => <option key={document.id} value={document.id}>{document.title}</option>)}
+        </select>
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Notas</span>
+        <textarea name="notes" rows={3} defaultValue={item?.notes ?? ""} className="w-full rounded-md border border-slate-300 px-3 py-2" />
+      </label>
+    </>
+  );
+}
+
+function readFinancingForm(form: FormData) {
+  return {
+    payment_month: String(form.get("payment_month") ?? ""),
+    payment_date: String(form.get("payment_date") ?? ""),
+    lender: String(form.get("lender") ?? ""),
+    total_payment: parseMoneyInput(form.get("total_payment")),
+    interest_amount: parseMoneyInput(form.get("interest_amount")),
+    principal_amount: parseMoneyInput(form.get("principal_amount")),
+    outstanding_principal: parseNullableMoneyInput(form.get("outstanding_principal")),
+    linked_document_id: String(form.get("linked_document_id") ?? "") || null,
+    notes: String(form.get("notes") ?? "")
+  };
+}
+
+function moneyInputValue(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") return "";
+  return String(value).replace(".", ",");
+}
+
+function StatLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-sm text-slate-500">{label}</p>
+      <p className="font-bold">{value}</p>
+    </div>
+  );
+}
+
 function DocumentForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data: Record<string, unknown>) => void }) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     onSubmit({
       title: String(form.get("title") ?? ""),
-      type: String(form.get("type") ?? "otro"),
-      subtype: String(form.get("type") ?? "otro"),
+      type: String(form.get("document_type") ?? "other_essential"),
+      document_type: String(form.get("document_type") ?? "other_essential"),
+      document_category: "essential",
       document_date: String(form.get("document_date") ?? ""),
-      amount: parseMoneyInput(form.get("amount")),
+      amount: parseNullableMoneyInput(form.get("amount")),
       currency: "EUR",
-      expiration_date: String(form.get("expiration_date") ?? "") || null,
+      valid_until: String(form.get("valid_until") ?? "") || null,
+      expiration_date: String(form.get("valid_until") ?? "") || null,
       provider: String(form.get("provider") ?? ""),
       notes: String(form.get("notes") ?? ""),
       status: String(form.get("status") ?? "pending_review"),
@@ -1868,7 +2086,7 @@ function DocumentForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data
   }
   return (
     <Card className="p-5">
-      <h3 className="mb-4 font-bold">Nuevo documento</h3>
+      <h3 className="mb-4 font-bold">Nuevo documento esencial</h3>
       <form onSubmit={submit} className="grid gap-3">
         <label className="block">
           <span className="mb-1 block text-sm font-medium">Titulo</span>
@@ -1876,8 +2094,8 @@ function DocumentForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data
         </label>
         <label className="block">
           <span className="mb-1 block text-sm font-medium">Tipo</span>
-          <select name="type" className="h-10 w-full rounded-md border border-slate-300 px-3">
-            {["factura","contrato","seguro","ibi","comunidad","certificado","garantia","manual","reserva","otro"].map((item) => <option key={item} value={item}>{labelDocumentType(item)}</option>)}
+          <select name="document_type" className="h-10 w-full rounded-md border border-slate-300 px-3">
+            {essentialDocumentTypes().map((item) => <option key={item} value={item}>{labelDocumentType(item)}</option>)}
           </select>
         </label>
         <label className="block">
@@ -1889,11 +2107,11 @@ function DocumentForm({ pending, onSubmit }: { pending: boolean; onSubmit: (data
           <input name="amount" type="number" min="0" step="0.01" className="h-10 w-full rounded-md border border-slate-300 px-3" />
         </label>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium">Vencimiento</span>
-          <input name="expiration_date" type="date" className="h-10 w-full rounded-md border border-slate-300 px-3" />
+          <span className="mb-1 block text-sm font-medium">Fecha vigencia / vencimiento</span>
+          <input name="valid_until" type="date" className="h-10 w-full rounded-md border border-slate-300 px-3" />
         </label>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium">Proveedor</span>
+          <span className="mb-1 block text-sm font-medium">Organismo / proveedor</span>
           <input name="provider" className="h-10 w-full rounded-md border border-slate-300 px-3" />
         </label>
         <label className="block">
@@ -1926,15 +2144,17 @@ function DocumentEditForm({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const type = String(form.get("type") ?? "otro");
+    const type = String(form.get("document_type") ?? "other_essential");
     onSubmit({
       title: String(form.get("title") ?? ""),
       type,
-      subtype: type,
+      document_type: type,
+      document_category: "essential",
       document_date: String(form.get("document_date") ?? "") || null,
-      amount: parseMoneyInput(form.get("amount")),
+      amount: parseNullableMoneyInput(form.get("amount")),
       currency: "EUR",
-      expiration_date: String(form.get("expiration_date") ?? "") || null,
+      valid_until: String(form.get("valid_until") ?? "") || null,
+      expiration_date: String(form.get("valid_until") ?? "") || null,
       provider: String(form.get("provider") ?? ""),
       notes: String(form.get("notes") ?? ""),
       status: String(form.get("status") ?? "pending_review"),
@@ -1950,8 +2170,8 @@ function DocumentEditForm({
       </label>
       <label className="block">
         <span className="mb-1 block text-sm font-medium">Tipo</span>
-        <select name="type" defaultValue={item.type ?? "otro"} className="h-10 w-full rounded-md border border-slate-300 px-3">
-          {["factura","contrato","seguro","ibi","comunidad","certificado","garantia","manual","reserva","otro"].map((option) => <option key={option} value={option}>{labelDocumentType(option)}</option>)}
+        <select name="document_type" defaultValue={item.document_type ?? item.type ?? "other_essential"} className="h-10 w-full rounded-md border border-slate-300 px-3">
+          {essentialDocumentTypes().map((option) => <option key={option} value={option}>{labelDocumentType(option)}</option>)}
         </select>
       </label>
       <label className="block">
@@ -1965,15 +2185,15 @@ function DocumentEditForm({
         <input name="document_date" type="date" defaultValue={dateInputValue(item.document_date)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
       </label>
       <label className="block">
-        <span className="mb-1 block text-sm font-medium">Vencimiento</span>
-        <input name="expiration_date" type="date" defaultValue={dateInputValue(item.expiration_date)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+        <span className="mb-1 block text-sm font-medium">Fecha vigencia / vencimiento</span>
+        <input name="valid_until" type="date" defaultValue={dateInputValue(item.valid_until ?? item.expiration_date)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
       </label>
       <label className="block">
         <span className="mb-1 block text-sm font-medium">Importe documental</span>
-        <input name="amount" inputMode="decimal" defaultValue={String(item.amount ?? item.cost ?? 0).replace(".", ",")} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+        <input name="amount" inputMode="decimal" defaultValue={item.amount === null || item.amount === undefined ? "" : String(item.amount).replace(".", ",")} className="h-10 w-full rounded-md border border-slate-300 px-3" />
       </label>
       <label className="block">
-        <span className="mb-1 block text-sm font-medium">Proveedor</span>
+        <span className="mb-1 block text-sm font-medium">Organismo / proveedor</span>
         <input name="provider" defaultValue={item.provider ?? ""} className="h-10 w-full rounded-md border border-slate-300 px-3" />
       </label>
       <label className="block md:col-span-2">
