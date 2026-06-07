@@ -17,7 +17,8 @@ create index if not exists idx_expenses_property_date on expenses(property_id, e
 alter table if exists documents drop constraint if exists documents_type_check;
 alter table if exists documents add constraint documents_type_check check (type in (
   'factura','contrato','seguro','ibi','comunidad','certificado','garantia','manual','reserva','otro',
-  'insurance','license','certificate','inspection','contract','warranty','deed','other'
+  'insurance','license','certificate','inspection','contract','warranty','deed','other',
+  'home_insurance','garbage_tax','energy_certificate','occupancy_certificate','tourist_license','other_essential'
 ));
 alter table if exists documents add column if not exists document_date date;
 alter table if exists documents add column if not exists amount numeric;

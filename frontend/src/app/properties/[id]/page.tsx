@@ -15,6 +15,7 @@ import {
   createPropertyIncome,
   createReservationIncome,
   deleteDriveFolder,
+  deletePropertyDocument,
   deletePropertyFinancing,
   disconnectPropertyAirbnb,
   disconnectPropertyDrive,
@@ -37,11 +38,12 @@ import {
   getPropertyReservations,
   linkDriveFileDocument,
   linkDriveFileExpense,
+  registerDriveFileDocument,
   registerDriveFileExpense,
+  registerDriveFileIncome,
   registerDocumentExpense,
   registerDocumentIncome,
   savePropertyAirbnbIcal,
-  saveDriveFileDocument,
   savePropertyMonthlyExpenses,
   syncAllPropertyDrive,
   syncPropertyAirbnb,
@@ -86,6 +88,7 @@ export default function PropertyDetailPage() {
   const { data: monthlyExpenses } = useQuery<MonthlyExpenseState>({ queryKey: ["property-monthly-expenses", propertyId, expenseMonth], queryFn: () => getPropertyMonthlyExpenses(propertyId, expenseMonth) });
   const { data: monthlyStats } = useQuery<MonthlyProfitStats>({ queryKey: ["property-monthly-stats", propertyId, Number(expenseMonth.slice(0, 4))], queryFn: () => getPropertyMonthlyStats(propertyId, Number(expenseMonth.slice(0, 4))) });
   const { data: documents = [] } = useQuery<DocumentItem[]>({ queryKey: ["property-documents", propertyId], queryFn: () => getPropertyDocuments(propertyId) });
+  const activeDocuments = useMemo(() => documents.filter((document) => !document.deleted_at), [documents]);
   const { data: groupedDocuments } = useQuery<GroupedFinance<DocumentItem>>({ queryKey: ["property-essential-documents", propertyId, financeYear], queryFn: () => getPropertyEssentialDocuments(propertyId, financeYear) });
   const { data: financing } = useQuery<GroupedFinancing>({ queryKey: ["property-financing", propertyId, financeYear], queryFn: () => getPropertyFinancing(propertyId, financeYear) });
   const { data: drive } = useQuery<DriveState>({ queryKey: ["property-drive", propertyId], queryFn: () => getPropertyDrive(propertyId) });
@@ -111,7 +114,7 @@ export default function PropertyDetailPage() {
     const totalIncome = realIncome.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
     const paidNights = realIncome.reduce((sum, item) => sum + Number(item.nights ?? 0), 0);
     const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
-    const ordinaryExpenses = documents
+    const ordinaryExpenses = activeDocuments
       .filter((document) => !document.is_demo && (document.document_category ?? "essential") === "essential" && document.status !== "ignored")
       .reduce((sum, document) => sum + Number(document.amount ?? document.cost ?? 0), 0);
     const financingItems = financing?.months.flatMap((month) => month.items) ?? [];
@@ -154,7 +157,7 @@ export default function PropertyDetailPage() {
       repairsExpenses: sumCategories(["maintenance", "repairs"]),
       categoryTotals
     };
-  }, [income, expenses, documents, financing, reservations, property?.initial_investment, property?.reform_cost]);
+  }, [income, expenses, activeDocuments, financing, reservations, property?.initial_investment, property?.reform_cost]);
   const tabs: Tab[] = showAirbnb
     ? ["Resumen", "Reservas", "Ingresos", "Gastos", "Documentos", "Financiacion", "Estadisticas"]
     : ["Resumen", "Contrato / Renta", "Ingresos", "Gastos", "Documentos", "Financiacion", "Estadisticas"];
@@ -203,6 +206,7 @@ export default function PropertyDetailPage() {
   const reservationUpdateMutation = useMutation({ mutationFn: ({ reservationId, data }: { reservationId: string; data: Record<string, unknown> }) => updatePropertyReservation(propertyId, reservationId, data), onSuccess: refresh });
   const documentMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyDocument(propertyId, data), onSuccess: refresh });
   const documentUpdateMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: string; data: Record<string, unknown> }) => updatePropertyDocument(propertyId, documentId, data), onSuccess: refresh });
+  const documentDeleteMutation = useMutation({ mutationFn: (documentId: string) => deletePropertyDocument(propertyId, documentId), onSuccess: refresh });
   const financingMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyFinancing(propertyId, data), onSuccess: refresh });
   const financingUpdateMutation = useMutation({ mutationFn: ({ paymentId, data }: { paymentId: string; data: Record<string, unknown> }) => updatePropertyFinancing(propertyId, paymentId, data), onSuccess: refresh });
   const financingDeleteMutation = useMutation({ mutationFn: (paymentId: string) => deletePropertyFinancing(propertyId, paymentId), onSuccess: refresh });
@@ -229,8 +233,12 @@ export default function PropertyDetailPage() {
     mutationFn: ({ fileId, data }: { fileId: string; data: Record<string, unknown> }) => registerDriveFileExpense(propertyId, fileId, data),
     onSuccess: refresh
   });
-  const driveSaveDocumentMutation = useMutation({
-    mutationFn: ({ fileId, data }: { fileId: string; data: Record<string, unknown> }) => saveDriveFileDocument(propertyId, fileId, data),
+  const driveRegisterDocumentMutation = useMutation({
+    mutationFn: ({ fileId, data }: { fileId: string; data: Record<string, unknown> }) => registerDriveFileDocument(propertyId, fileId, data),
+    onSuccess: refresh
+  });
+  const driveRegisterIncomeMutation = useMutation({
+    mutationFn: ({ fileId, data }: { fileId: string; data: Record<string, unknown> }) => registerDriveFileIncome(propertyId, fileId, data),
     onSuccess: refresh
   });
 
@@ -370,8 +378,9 @@ export default function PropertyDetailPage() {
               </Card>
               <GroupedDocumentView
                 data={groupedDocuments}
-                pending={documentUpdateMutation.isPending}
+                pending={documentUpdateMutation.isPending || documentDeleteMutation.isPending}
                 onUpdate={(documentId, data) => documentUpdateMutation.mutate({ documentId, data })}
+                onDelete={(documentId) => documentDeleteMutation.mutate(documentId)}
               />
             </section>
           </section>
@@ -388,11 +397,11 @@ export default function PropertyDetailPage() {
               loadingAvailableDriveFolders={loadingAvailableDriveFolders}
               googleStatus={searchParams.get("google")}
               expenses={expenses}
-              documents={documents}
+              documents={activeDocuments}
               pendingConnect={driveFolderCreateMutation.isPending}
               pendingAuthorize={driveAuthorizeMutation.isPending}
               pendingSync={driveSyncMutation.isPending || driveSyncAllMutation.isPending || driveFolderSyncMutation.isPending}
-              pendingUpdate={driveUpdateMutation.isPending || driveLinkExpenseMutation.isPending || driveLinkDocumentMutation.isPending || driveRegisterExpenseMutation.isPending || driveSaveDocumentMutation.isPending || driveDisconnectMutation.isPending}
+              pendingUpdate={driveUpdateMutation.isPending || driveLinkExpenseMutation.isPending || driveLinkDocumentMutation.isPending || driveRegisterExpenseMutation.isPending || driveRegisterDocumentMutation.isPending || driveRegisterIncomeMutation.isPending || driveDisconnectMutation.isPending}
               onAuthorize={() => driveAuthorizeMutation.mutate()}
               onLoadFolders={() => refetchAvailableDriveFolders()}
               onDisconnect={() => driveDisconnectMutation.mutate()}
@@ -406,7 +415,8 @@ export default function PropertyDetailPage() {
               onLinkExpense={(fileId, expenseId) => driveLinkExpenseMutation.mutate({ fileId, expenseId })}
               onLinkDocument={(fileId, documentId) => driveLinkDocumentMutation.mutate({ fileId, documentId })}
               onRegisterExpense={(fileId, data) => driveRegisterExpenseMutation.mutate({ fileId, data })}
-              onSaveDocument={(fileId, data) => driveSaveDocumentMutation.mutate({ fileId, data })}
+              onSaveDocument={(fileId, data) => driveRegisterDocumentMutation.mutate({ fileId, data })}
+              onRegisterIncome={(fileId, data) => driveRegisterIncomeMutation.mutate({ fileId, data })}
             />
             </section>
           )}
@@ -415,7 +425,7 @@ export default function PropertyDetailPage() {
 
       {tab === "Financiacion" && (
         <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
-          <FinancingForm pending={financingMutation.isPending} documents={documents.filter((document) => document.document_category !== "operational_receipt")} onSubmit={(data) => financingMutation.mutate(data)} />
+          <FinancingForm pending={financingMutation.isPending} documents={activeDocuments.filter((document) => document.document_category !== "operational_receipt")} onSubmit={(data) => financingMutation.mutate(data)} />
           <section className="space-y-3">
             <Card className="p-4">
               <YearSelector year={financeYear} onChange={setFinanceYear} />
@@ -423,7 +433,7 @@ export default function PropertyDetailPage() {
             <GroupedFinancingView
               data={financing}
               pending={financingUpdateMutation.isPending || financingDeleteMutation.isPending}
-              documents={documents}
+              documents={activeDocuments}
               onUpdate={(paymentId, data) => financingUpdateMutation.mutate({ paymentId, data })}
               onDelete={(paymentId) => financingDeleteMutation.mutate(paymentId)}
             />
@@ -452,7 +462,7 @@ export default function PropertyDetailPage() {
             <ExpenseStat title="Financiacion - amortizacion" subtitle="Capital amortizado, separado del gasto" amount={profitabilityStats.financingPrincipal} />
             <ExpenseStat title="Cashflow tras financiacion" subtitle="Beneficio operativo menos cuota total" amount={profitabilityStats.net - profitabilityStats.financingTotal} />
             <ExpenseStat title="Reparaciones" subtitle="Mantenimiento y reparaciones" amount={profitabilityStats.repairsExpenses} />
-            <ExpenseStat title="Documentos activos" subtitle="Documentos registrados en esta vivienda" amount={documents.length} plain />
+            <ExpenseStat title="Documentos activos" subtitle="Documentos registrados en esta vivienda" amount={activeDocuments.length} plain />
           </section>
 
           <MonthlyProfitPanel stats={monthlyStats} />
@@ -504,7 +514,8 @@ function DrivePanel({
   onLinkExpense,
   onLinkDocument,
   onRegisterExpense,
-  onSaveDocument
+  onSaveDocument,
+  onRegisterIncome
 }: {
   drive: DriveState;
   availableDriveFolders: AvailableDriveFolder[];
@@ -531,21 +542,22 @@ function DrivePanel({
   onLinkDocument: (fileId: string, documentId: string) => void;
   onRegisterExpense: (fileId: string, data: Record<string, unknown>) => void;
   onSaveDocument: (fileId: string, data: Record<string, unknown>) => void;
+  onRegisterIncome: (fileId: string, data: Record<string, unknown>) => void;
 }) {
   const [filter, setFilter] = useState("pending_review");
   const [folderFilter, setFolderFilter] = useState("todos");
   const filtered = drive.files.filter((file) => {
     if (folderFilter !== "todos" && file.drive_folder_mapping_id !== folderFilter) return false;
     if (filter === "todos") return true;
-    if (filter === "registered") return file.review_status === "registered" || file.review_status === "linked";
-    if (["pending_review", "reviewed", "linked", "ignored"].includes(filter)) return file.review_status === filter;
+    if (filter === "registered") return ["registered","linked","registered_document","registered_expense","registered_income"].includes(String(file.review_status));
+    if (["pending_review", "reviewed", "linked", "registered_document", "registered_expense", "registered_income", "ignored"].includes(filter)) return file.review_status === filter;
     return true;
   });
   const counts = drive.files.reduce<Record<string, number>>((acc, file) => {
     const status = file.review_status ?? "pending_review";
     acc[status] = (acc[status] ?? 0) + 1;
     acc.todos = (acc.todos ?? 0) + 1;
-    acc.registered = (acc.registered ?? 0) + (status === "registered" || status === "linked" ? 1 : 0);
+    acc.registered = (acc.registered ?? 0) + (["registered","linked","registered_document","registered_expense","registered_income"].includes(status) ? 1 : 0);
     return acc;
   }, { todos: 0 });
 
@@ -613,7 +625,7 @@ function DrivePanel({
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="font-bold">Bandeja de revisión</h3>
-            <p className="text-sm text-slate-500">Revisa archivos nuevos y conviertelos en gastos o documentos.</p>
+            <p className="text-sm text-slate-500">Revisa archivos nuevos y conviertelos en documento esencial, gasto o ingreso.</p>
           </div>
           <select value={folderFilter} onChange={(event) => setFolderFilter(event.target.value)} className="h-10 rounded-md border border-slate-300 px-3">
             <option value="todos">Todas las carpetas</option>
@@ -621,7 +633,7 @@ function DrivePanel({
           </select>
         </div>
         <div className="flex flex-wrap gap-2">
-          {["pending_review", "registered", "reviewed", "ignored", "todos"].map((item) => (
+          {["pending_review", "registered_document", "registered_expense", "registered_income", "ignored", "todos"].map((item) => (
             <button key={item} onClick={() => setFilter(item)} className={`rounded-md px-3 py-2 text-sm font-semibold ${filter === item ? "bg-ink text-white" : "bg-slate-100 text-slate-600"}`}>
               {labelDriveFilter(item)} ({counts[item] ?? 0})
             </button>
@@ -642,6 +654,7 @@ function DrivePanel({
             onLinkDocument={onLinkDocument}
             onRegisterExpense={onRegisterExpense}
             onSaveDocument={onSaveDocument}
+            onRegisterIncome={onRegisterIncome}
           />
         ))}
         {filtered.length === 0 && <Card className="p-5 text-sm text-slate-500">No hay archivos para este filtro.</Card>}
@@ -809,11 +822,13 @@ function GroupedExpenseView({ data }: { data?: GroupedFinance<Expense> }) {
 function GroupedDocumentView({
   data,
   pending,
-  onUpdate
+  onUpdate,
+  onDelete
 }: {
   data?: GroupedFinance<DocumentItem>;
   pending: boolean;
   onUpdate: (documentId: string, data: Record<string, unknown>) => void;
+  onDelete: (documentId: string) => void;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const months = (data?.months ?? []).filter((month) => month.items.length > 0);
@@ -835,6 +850,7 @@ function GroupedDocumentView({
                   <Button disabled={pending} onClick={() => setEditingId(editingId === item.id ? null : item.id)} className="bg-white text-ink hover:bg-slate-50">
                     {editingId === item.id ? "Cancelar" : "Editar"}
                   </Button>
+                  <Button disabled={pending} onClick={() => window.confirm("Eliminar de Hogarflow? No se borrara el archivo de Drive.") && onDelete(item.id)} className="bg-white text-red-700 hover:bg-red-50">Eliminar de Hogarflow</Button>
                 </div>
               </div>
               {editingId === item.id && (
@@ -1025,8 +1041,8 @@ function ReservationsPanel({
         <Metric title="Proximo check-out" value={formatDate(stats?.next_check_out)} icon={<CalendarClock className="h-5 w-5" />} />
         <Metric title="Noches este mes" value={String(stats?.booked_nights_current_month ?? 0)} icon={<CalendarClock className="h-5 w-5" />} />
         <Metric title="Ocupacion 30 dias" value={`${stats?.occupancy_next_30_days ?? 0}%`} icon={<Wallet className="h-5 w-5" />} />
-        <Metric title="Importes pendientes" value={String(stats?.incomes_missing_amount ?? 0)} icon={<Receipt className="h-5 w-5" />} />
-        <Metric title="Huespedes conocidos" value={String(stats?.guests_known ?? 0)} icon={<Plus className="h-5 w-5" />} />
+        <Metric title="Entradas del mes" value={String(countMonthCheckIns(reservations, monthCursor))} icon={<Receipt className="h-5 w-5" />} />
+        <Metric title="Salidas del mes" value={String(countMonthCheckOuts(reservations, monthCursor))} icon={<Plus className="h-5 w-5" />} />
       </section>
 
       <ReservationCalendar reservations={reservations} month={monthCursor} onMonthChange={setMonthCursor} />
@@ -1081,11 +1097,12 @@ function ReservationCard({
   const [guestCount, setGuestCount] = useState(reservation.guest_count?.toString() ?? "");
   const hasIncome = Boolean(reservation.income_id);
   const amountPending = !hasIncome || reservation.income_amount_status === "missing" || reservation.income_amount === null || reservation.income_amount === undefined;
+  const reservationName = displayReservationName(reservation);
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="font-bold">{reservation.title ?? (reservation.guest_name ? `Airbnb - ${reservation.guest_name}` : "Reserva Airbnb")}</p>
+          <p className="font-bold">{reservationName}</p>
           <p className="text-sm text-slate-500">Check-in: {formatDate(reservation.check_in)} · Check-out: {formatDate(reservation.check_out)} · {reservation.nights ?? "-"} noches</p>
           <p className="mt-1 text-sm text-slate-500">Huespedes: {reservation.guest_count ?? "Sin indicar"} · Estado: {labelReservationStatus(reservation.status)}</p>
           <p className="mt-1 text-sm text-slate-500">Ingreso: {hasIncome ? "Ingreso creado" : "sin crear"} · Importe: {amountPending ? "Pendiente de importe" : `${formatCurrency(reservation.income_amount)} · ${labelAmountStatus(reservation.income_amount_status)}`}</p>
@@ -1115,12 +1132,12 @@ function ReservationCalendar({ reservations, month, onMonthChange }: { reservati
   const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
   const cells = Array.from({ length: startOffset + daysInMonth }, (_, index) => index < startOffset ? null : new Date(month.getFullYear(), month.getMonth(), index - startOffset + 1));
   const todayKey = dateKey(new Date());
-  const monthLabel = month.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
-  const selectedReservations = selectedDay ? reservations.filter((reservation) => reservationCoversDate(reservation, selectedDay)) : [];
+  const monthLabel = formatCalendarMonth(month);
+  const selectedReservations = selectedDay ? reservations.filter((reservation) => reservationTouchesDate(reservation, selectedDay)) : [];
   return (
     <Card className="p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="font-bold capitalize">{monthLabel}</h3>
+        <h3 className="font-bold">{monthLabel}</h3>
         <div className="flex gap-2">
           <Button onClick={() => onMonthChange(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className="bg-white text-ink hover:bg-slate-50">Anterior</Button>
           <Button onClick={() => onMonthChange(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className="bg-white text-ink hover:bg-slate-50">Siguiente</Button>
@@ -1133,15 +1150,18 @@ function ReservationCalendar({ reservations, month, onMonthChange }: { reservati
         {cells.map((day, index) => {
           if (!day) return <div key={`empty-${index}`} className="aspect-square rounded-md bg-slate-50" />;
           const key = dateKey(day);
-          const dayReservations = reservations.filter((reservation) => reservationCoversDate(reservation, day));
-          const checkIn = reservations.some((reservation) => dateKey(new Date(reservation.check_in)) === key);
-          const checkOut = reservations.some((reservation) => dateKey(new Date(reservation.check_out)) === key);
+          const activeReservations = reservations.filter((reservation) => reservationOccupiesDate(reservation, day));
+          const checkIns = reservations.filter((reservation) => dateKey(new Date(reservation.check_in)) === key);
+          const checkOuts = reservations.filter((reservation) => dateKey(new Date(reservation.check_out)) === key);
+          const isBooked = activeReservations.length > 0;
+          const guestLabel = displayReservationName(checkIns[0] ?? checkOuts[0] ?? activeReservations[0]);
           return (
-            <button type="button" key={key} onClick={() => setSelectedDay(day)} className={`aspect-square rounded-md border p-2 text-left text-xs ${dayReservations.length ? "border-meadow bg-emerald-50 text-ink" : "border-slate-200 bg-white"} ${key === todayKey ? "ring-2 ring-sun" : ""}`}>
-              <p className="font-bold">{day.getDate()}</p>
-              {checkIn && <p className="mt-1 text-[10px] text-meadow">Entrada</p>}
-              {checkOut && <p className="text-[10px] text-coral">Salida</p>}
-              {dayReservations.length > 0 && !checkIn && !checkOut && <p className="mt-1 text-[10px]">Reservado</p>}
+            <button type="button" key={key} onClick={() => setSelectedDay(day)} className={`min-h-24 rounded-md border p-2 text-left ${isBooked ? "border-meadow bg-emerald-50 text-ink" : "border-slate-200 bg-white"} ${key === todayKey ? "ring-2 ring-sun" : ""}`}>
+              <p className="text-base font-bold">{day.getDate()}</p>
+              {checkIns.length > 0 && <p className="mt-1 text-xs font-bold text-meadow">Entrada{checkIns.length > 1 ? ` (x${checkIns.length})` : ""}</p>}
+              {checkOuts.length > 0 && <p className="text-xs font-bold text-coral">Salida{checkOuts.length > 1 ? ` (x${checkOuts.length})` : ""}</p>}
+              {isBooked && checkIns.length === 0 && checkOuts.length === 0 && <p className="mt-1 text-xs font-semibold">Reservado</p>}
+              {(checkIns.length > 0 || checkOuts.length > 0 || isBooked) && <p className="mt-1 truncate text-xs text-slate-600">{guestLabel}</p>}
             </button>
           );
         })}
@@ -1151,7 +1171,7 @@ function ReservationCalendar({ reservations, month, onMonthChange }: { reservati
           <p className="font-semibold">{formatDate(selectedDay.toISOString())}</p>
           <div className="mt-2 grid gap-2">
             {selectedReservations.map((reservation) => (
-              <p key={reservation.id} className="rounded-md bg-slate-100 p-2 text-sm">{reservation.guest_name ?? reservation.title ?? "Reserva"} · {formatDate(reservation.check_in)} - {formatDate(reservation.check_out)}</p>
+              <p key={reservation.id} className="rounded-md bg-slate-100 p-2 text-sm">{displayReservationName(reservation)} · {formatDate(reservation.check_in)} - {formatDate(reservation.check_out)}</p>
             ))}
             {selectedReservations.length === 0 && <p className="text-sm text-slate-500">Sin reservas este dia.</p>}
           </div>
@@ -1292,7 +1312,8 @@ function DriveFileCard({
   onLinkExpense,
   onLinkDocument,
   onRegisterExpense,
-  onSaveDocument
+  onSaveDocument,
+  onRegisterIncome
 }: {
   file: DriveFile;
   expenses: Expense[];
@@ -1303,10 +1324,11 @@ function DriveFileCard({
   onLinkDocument: (fileId: string, documentId: string) => void;
   onRegisterExpense: (fileId: string, data: Record<string, unknown>) => void;
   onSaveDocument: (fileId: string, data: Record<string, unknown>) => void;
+  onRegisterIncome: (fileId: string, data: Record<string, unknown>) => void;
 }) {
   const [expenseId, setExpenseId] = useState(file.linked_expense_id ?? "");
   const [documentId, setDocumentId] = useState(file.linked_document_id ?? "");
-  const [mode, setMode] = useState<"none" | "expense" | "linkExpense" | "document" | "linkDocument">("none");
+  const [mode, setMode] = useState<"none" | "expense" | "income" | "linkExpense" | "document" | "linkDocument">("none");
   const defaultDate = (file.modified_time ?? file.created_time ?? new Date().toISOString()).slice(0, 10);
   function submitExpense(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1315,7 +1337,20 @@ function DriveFileCard({
       description: String(form.get("description") ?? file.name),
       expense_date: String(form.get("expense_date") ?? defaultDate),
       amount: String(form.get("amount") ?? ""),
-      category: String(form.get("category") ?? "otros")
+      category: String(form.get("category") ?? "other"),
+      provider: String(form.get("provider") ?? ""),
+      notes: String(form.get("notes") ?? "")
+    });
+  }
+  function submitIncome(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    onRegisterIncome(file.id, {
+      description: String(form.get("description") ?? file.name),
+      income_date: String(form.get("income_date") ?? defaultDate),
+      amount: String(form.get("amount") ?? ""),
+      source: String(form.get("source") ?? "google_drive"),
+      notes: String(form.get("notes") ?? "")
     });
   }
   function submitDocument(event: FormEvent<HTMLFormElement>) {
@@ -1350,8 +1385,8 @@ function DriveFileCard({
             </a>
           )}
           <Button disabled={pending} onClick={() => setMode(mode === "expense" ? "none" : "expense")} className="bg-meadow hover:bg-green-700">Registrar como gasto</Button>
-          <Button disabled={pending} onClick={() => setMode(mode === "document" ? "none" : "document")} className="bg-white text-ink hover:bg-slate-50">Guardar como documento</Button>
-          <Button disabled={pending} onClick={() => onUpdate(file.id, { review_status: "reviewed" })} className="bg-white text-ink hover:bg-slate-50">Marcar revisado</Button>
+          <Button disabled={pending} onClick={() => setMode(mode === "income" ? "none" : "income")} className="bg-white text-meadow hover:bg-slate-50">Registrar como ingreso</Button>
+          <Button disabled={pending} onClick={() => setMode(mode === "document" ? "none" : "document")} className="bg-white text-ink hover:bg-slate-50">Registrar como documento esencial</Button>
           <Button disabled={pending} onClick={() => onUpdate(file.id, { review_status: "ignored" })} className="bg-white text-slate-600 hover:bg-slate-50">Ignorar</Button>
         </div>
       </div>
@@ -1376,12 +1411,46 @@ function DriveFileCard({
             <input name="amount" type="number" step="0.01" required className="h-10 w-full rounded-md border border-slate-300 px-3" />
           </label>
           <label className="block">
+            <span className="mb-1 block text-sm font-medium">Proveedor</span>
+            <input name="provider" className="h-10 w-full rounded-md border border-slate-300 px-3" />
+          </label>
+          <label className="block">
             <span className="mb-1 block text-sm font-medium">Categoria general</span>
             <select name="category" defaultValue="other" className="h-10 w-full rounded-md border border-slate-300 px-3">
               {expenseInboxCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">Notas</span>
+            <input name="notes" className="h-10 w-full rounded-md border border-slate-300 px-3" />
+          </label>
           <Button disabled={pending} className="bg-meadow hover:bg-green-700 md:col-span-2">Guardar gasto</Button>
+        </form>
+      )}
+
+      {mode === "income" && (
+        <form onSubmit={submitIncome} className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-white p-4 md:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">Concepto</span>
+            <input name="description" defaultValue={file.name} required className="h-10 w-full rounded-md border border-slate-300 px-3" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">Fecha ingreso</span>
+            <input name="income_date" type="date" defaultValue={defaultDate} required className="h-10 w-full rounded-md border border-slate-300 px-3" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">Importe</span>
+            <input name="amount" type="number" step="0.01" required className="h-10 w-full rounded-md border border-slate-300 px-3" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">Origen</span>
+            <input name="source" defaultValue="google_drive" className="h-10 w-full rounded-md border border-slate-300 px-3" />
+          </label>
+          <label className="block md:col-span-2">
+            <span className="mb-1 block text-sm font-medium">Notas</span>
+            <input name="notes" className="h-10 w-full rounded-md border border-slate-300 px-3" />
+          </label>
+          <Button disabled={pending} className="bg-meadow hover:bg-green-700 md:col-span-2">Guardar ingreso</Button>
         </form>
       )}
 
@@ -1450,6 +1519,9 @@ function reviewStatusClasses(value?: string | null) {
   const classes: Record<string, string> = {
     pending_review: "border-amber-200 bg-amber-50",
     registered: "border-emerald-200 bg-emerald-50",
+    registered_document: "border-emerald-200 bg-emerald-50",
+    registered_expense: "border-emerald-200 bg-emerald-50",
+    registered_income: "border-emerald-200 bg-emerald-50",
     linked: "border-emerald-200 bg-emerald-50",
     reviewed: "border-sky-200 bg-sky-50",
     ignored: "border-slate-200 bg-slate-50"
@@ -1476,6 +1548,9 @@ function labelReviewStatus(value?: string | null) {
   const labels: Record<string, string> = {
     pending_review: "Pendiente",
     registered: "Registrado",
+    registered_document: "Documento esencial",
+    registered_expense: "Gasto registrado",
+    registered_income: "Ingreso registrado",
     reviewed: "Revisado",
     linked: "Asociado",
     ignored: "Ignorado"
@@ -1512,7 +1587,7 @@ function labelDocumentType(value?: string | null) {
 }
 
 function essentialDocumentTypes() {
-  return ["ibi", "home_insurance", "garbage_tax", "energy_certificate", "occupancy_certificate", "tourist_license", "other_essential"];
+  return ["other_essential", "other"];
 }
 
 function labelDocumentStatus(value?: string | null) {
@@ -1540,6 +1615,9 @@ function labelDriveFilter(value: string) {
     todos: "Todos",
     pending_review: "Pendientes",
     registered: "Registrados",
+    registered_document: "Documentos",
+    registered_expense: "Gastos",
+    registered_income: "Ingresos",
     reviewed: "Revisados",
     linked: "Asociados",
     ignored: "Ignorados"
@@ -1650,12 +1728,50 @@ function dateKey(value: Date) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 }
 
-function reservationCoversDate(reservation: Reservation, day: Date) {
+function reservationOccupiesDate(reservation: Reservation, day: Date) {
   if (reservation.status === "cancelled" || reservation.status === "removed_from_calendar") return false;
   const start = new Date(reservation.check_in);
   const end = new Date(reservation.check_out);
   const current = new Date(day.getFullYear(), day.getMonth(), day.getDate());
   return current >= new Date(start.getFullYear(), start.getMonth(), start.getDate()) && current < new Date(end.getFullYear(), end.getMonth(), end.getDate());
+}
+
+function reservationTouchesDate(reservation: Reservation, day: Date) {
+  if (reservation.status === "cancelled" || reservation.status === "removed_from_calendar") return false;
+  const key = dateKey(day);
+  return reservationOccupiesDate(reservation, day) || dateKey(new Date(reservation.check_in)) === key || dateKey(new Date(reservation.check_out)) === key;
+}
+
+function countMonthCheckIns(reservations: Reservation[], month: Date) {
+  return reservations.filter((reservation) => reservation.status !== "cancelled" && reservation.status !== "removed_from_calendar" && sameMonth(new Date(reservation.check_in), month)).length;
+}
+
+function countMonthCheckOuts(reservations: Reservation[], month: Date) {
+  return reservations.filter((reservation) => reservation.status !== "cancelled" && reservation.status !== "removed_from_calendar" && sameMonth(new Date(reservation.check_out), month)).length;
+}
+
+function sameMonth(date: Date, month: Date) {
+  return date.getFullYear() === month.getFullYear() && date.getMonth() === month.getMonth();
+}
+
+function formatCalendarMonth(value: Date) {
+  const month = new Intl.DateTimeFormat("es-ES", { month: "long" }).format(value);
+  return `${month.charAt(0).toUpperCase()}${month.slice(1)} de ${value.getFullYear()}`;
+}
+
+function displayReservationName(reservation?: Reservation | null) {
+  if (!reservation) return "Reserva Airbnb";
+  const candidates = [reservation.guest_name, reservation.income_guest_name, reservation.title, reservation.income_description];
+  for (const candidate of candidates) {
+    const text = String(candidate ?? "").trim();
+    if (text && !isGenericReservationName(text)) return text.replace(/^Airbnb\s*-\s*/i, "");
+  }
+  return "Reserva Airbnb";
+}
+
+function isGenericReservationName(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return ["reserva", "reserved", "airbnb (not available)", "not available", "airbnb", "reserva airbnb"].includes(normalized);
 }
 
 function Metric({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {

@@ -7,7 +7,7 @@ import type { AuthUser } from "../types.js";
 
 const documentTypes = new Set(["factura", "contrato", "seguro", "ibi", "comunidad", "mantenimiento", "reserva", "otro"]);
 const folderTypes = new Set(["facturas", "documentos", "contratos", "seguros", "ibi", "comunidad", "mantenimiento", "reservas", "otros"]);
-const reviewStatuses = new Set(["pending_review", "registered", "reviewed", "linked", "ignored"]);
+const reviewStatuses = new Set(["pending_review", "registered", "reviewed", "linked", "registered_document", "registered_expense", "registered_income", "ignored"]);
 const expenseCategories = new Set(["electricity","water","internet","community","cleaning","ibi","garbage","home_insurance","liability_insurance","rental_insurance","maintenance","repairs","furniture","airbnb_commission","mortgage","other"]);
 
 type DriveFile = {
@@ -378,13 +378,13 @@ export async function registerExpenseFromFile(schemaName: string, propertyId: st
   }
   const result = await query(
     `insert into expenses
-      (property_id, category, provider, amount, expense_date, description, receipt_url, drive_file_id)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
+      (property_id, category, provider, amount, expense_date, description, receipt_url, drive_file_id, source, data_origin)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,'google_drive','google_drive')
      returning *`,
     [
       propertyId,
       normalizeExpenseCategory(input.category),
-      null,
+      textOrNull(input.provider),
       amount,
       expenseDate,
       String(input.description ?? input.concept ?? file.name ?? "Gasto Drive"),
@@ -393,7 +393,41 @@ export async function registerExpenseFromFile(schemaName: string, propertyId: st
     ],
     schemaName
   );
-  await updateFile(schemaName, propertyId, fileId, { linked_expense_id: result.rows[0].id, review_status: "registered" });
+  await updateFile(schemaName, propertyId, fileId, { linked_expense_id: result.rows[0].id, review_status: "registered_expense" });
+  return result.rows[0];
+}
+
+export async function registerIncomeFromFile(schemaName: string, propertyId: string, fileId: string, input: Record<string, unknown>) {
+  await validateProperty(schemaName, propertyId);
+  const file = await getDriveFile(schemaName, propertyId, fileId);
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const err = new Error("El importe del ingreso es obligatorio") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const incomeDate = String(input.income_date ?? "").trim();
+  if (!incomeDate) {
+    const err = new Error("La fecha del ingreso es obligatoria") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+  const result = await query(
+    `insert into income
+      (property_id, source, amount, currency, income_date, description, amount_status, data_origin, is_demo, metadata)
+     values ($1,$2,$3,'EUR',$4,$5,'manual','google_drive',false,$6::jsonb)
+     returning *`,
+    [
+      propertyId,
+      textOrNull(input.source) ?? "google_drive",
+      amount,
+      incomeDate,
+      String(input.description ?? input.concept ?? file.name ?? "Ingreso Drive"),
+      JSON.stringify({ drive_file_id: file.id, drive_file_name: file.name, notes: textOrNull(input.notes) })
+    ],
+    schemaName
+  );
+  await updateFile(schemaName, propertyId, fileId, { linked_income_id: result.rows[0].id, review_status: "registered_income" });
   return result.rows[0];
 }
 
@@ -438,7 +472,7 @@ export async function saveDocumentFromFile(schemaName: string, propertyId: strin
       ],
       schemaName
     );
-    await updateFile(schemaName, propertyId, fileId, { linked_document_id: updated.rows[0].id, review_status: "linked" });
+    await updateFile(schemaName, propertyId, fileId, { linked_document_id: updated.rows[0].id, review_status: "registered_document" });
     return updated.rows[0];
   }
   const result = await query(
@@ -458,7 +492,7 @@ export async function saveDocumentFromFile(schemaName: string, propertyId: strin
     ],
     schemaName
   );
-  await updateFile(schemaName, propertyId, fileId, { linked_document_id: result.rows[0].id, review_status: "linked" });
+  await updateFile(schemaName, propertyId, fileId, { linked_document_id: result.rows[0].id, review_status: "registered_document" });
   return result.rows[0];
 }
 
@@ -802,6 +836,11 @@ function normalizeProviderHint(value: unknown, folderName: string) {
     if (name.includes(provider)) return provider;
   }
   return null;
+}
+
+function textOrNull(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text.length ? text : null;
 }
 
 function normalizeExpenseCategory(value: unknown) {

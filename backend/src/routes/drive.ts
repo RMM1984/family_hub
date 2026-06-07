@@ -70,8 +70,20 @@ driveRouter.post("/files/:fileId/register-expense", requireRole("admin"), async 
   res.status(201).json({ data: await drive.registerExpenseFromFile(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), req.body) });
 });
 
+driveRouter.post("/files/:fileId/register-income", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.status(201).json({ data: await drive.registerIncomeFromFile(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), req.body) });
+});
+
+driveRouter.post("/files/:fileId/register-document", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.status(201).json({ data: await drive.saveDocumentFromFile(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), req.body) });
+});
+
 driveRouter.post("/files/:fileId/save-document", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
   res.status(201).json({ data: await drive.saveDocumentFromFile(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), req.body) });
+});
+
+driveRouter.patch("/files/:fileId/ignore", requireRole("admin"), async (req: AuthedRequest, res: Response) => {
+  res.json({ data: await drive.updateFile(req.schemaName!, String(req.params.propertyId), String(req.params.fileId), { review_status: "ignored" }) });
 });
 
 driveRouter.delete("/disconnect", requireRole("admin"), async (req: AuthedRequest, res: Response) => {

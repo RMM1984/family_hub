@@ -11,6 +11,7 @@ export async function groupedEssentialDocuments(schemaName: string, propertyId: 
      from documents
      where property_id = $1
        and coalesce(document_category, 'essential') = 'essential'
+       and deleted_at is null
        and coalesce(document_date, created_at::date) >= $2::date
        and coalesce(document_date, created_at::date) < ($2::date + interval '1 year')
        and coalesce(is_demo,false) = false
@@ -71,7 +72,7 @@ export async function updateEssentialDocument(schemaName: string, propertyId: st
 
 export async function deleteEssentialDocument(schemaName: string, propertyId: string, documentId: string) {
   await validateProperty(schemaName, propertyId);
-  await query("update documents set status = 'ignored', updated_at = now() where property_id = $1 and id = $2", [propertyId, documentId], schemaName);
+  await query("update documents set status = 'ignored', deleted_at = now(), updated_at = now() where property_id = $1 and id = $2", [propertyId, documentId], schemaName);
   return { deleted: true };
 }
 

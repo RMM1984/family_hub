@@ -44,6 +44,7 @@ export async function groupedDocuments(schemaName: string, propertyId: string, y
      from documents
      where property_id = $1
        and coalesce(document_category, 'essential') = 'essential'
+       and deleted_at is null
        and coalesce(document_date, created_at::date) >= $2::date
        and coalesce(document_date, created_at::date) < ($2::date + interval '1 year')
        and coalesce(is_demo,false) = false

@@ -14,7 +14,9 @@ export async function listReservations(schemaName: string, propertyId: string) {
             i.amount as income_amount,
             i.amount_status as income_amount_status,
             i.data_origin as income_data_origin,
-            i.is_demo as income_is_demo
+            i.is_demo as income_is_demo,
+            i.guest_name as income_guest_name,
+            i.description as income_description
      from property_reservations pr
      left join income i on i.reservation_id = pr.id and i.property_id = pr.property_id
      where pr.property_id = $1
@@ -149,6 +151,14 @@ export async function getStats(schemaName: string, propertyId: string) {
   const upcomingCheckout = active.filter((reservation) => parseDate(reservation.check_out) >= today).sort((a, b) => parseDate(a.check_out).getTime() - parseDate(b.check_out).getTime());
   const bookedCurrentMonth = bookedNights(active, currentMonthStart, currentMonthEnd);
   const bookedNext30 = bookedNights(active, today, next30End);
+  const checkInsCurrentMonth = active.filter((reservation) => {
+    const date = parseDate(reservation.check_in);
+    return date >= currentMonthStart && date < currentMonthEnd;
+  }).length;
+  const checkOutsCurrentMonth = active.filter((reservation) => {
+    const date = parseDate(reservation.check_out);
+    return date >= currentMonthStart && date < currentMonthEnd;
+  }).length;
   const availableCurrentMonth = daysBetween(currentMonthStart, currentMonthEnd);
   const availableNext30 = daysBetween(today, next30End);
   return {
@@ -160,6 +170,8 @@ export async function getStats(schemaName: string, propertyId: string) {
     booked_nights_next_30_days: bookedNext30,
     occupancy_current_month: percentage(bookedCurrentMonth, availableCurrentMonth),
     occupancy_next_30_days: percentage(bookedNext30, availableNext30),
+    check_ins_current_month: checkInsCurrentMonth,
+    check_outs_current_month: checkOutsCurrentMonth,
     incomes_missing_amount: reservations.filter((reservation) => reservation.income_amount_status === "missing" || reservation.income_amount === null || reservation.income_amount === undefined).length,
     guests_known: reservations.reduce((sum, reservation) => sum + Number(reservation.guest_count ?? 0), 0)
   };

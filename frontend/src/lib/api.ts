@@ -49,6 +49,7 @@ export const createPropertyIncome = (id: string, data: Record<string, unknown>) 
 export const updatePropertyIncome = (propertyId: string, incomeId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/income/${incomeId}`, data).then((r) => r.data.data);
 export const createPropertyDocument = (id: string, data: Record<string, unknown>) => api.post(`/properties/${id}/documents`, data).then((r) => r.data.data);
 export const updatePropertyDocument = (propertyId: string, documentId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/documents/${documentId}`, data).then((r) => r.data.data);
+export const deletePropertyDocument = (propertyId: string, documentId: string) => api.delete(`/properties/${propertyId}/documents/${documentId}`).then((r) => r.data.data);
 export const createPropertyFinancing = (propertyId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/financing`, data).then((r) => r.data.data);
 export const updatePropertyFinancing = (propertyId: string, paymentId: string, data: Record<string, unknown>) => api.patch(`/properties/${propertyId}/financing/${paymentId}`, data).then((r) => r.data.data);
 export const deletePropertyFinancing = (propertyId: string, paymentId: string) => api.delete(`/properties/${propertyId}/financing/${paymentId}`).then((r) => r.data.data);
@@ -95,6 +96,8 @@ export const updateDriveFile = (propertyId: string, fileId: string, data: Record
 export const linkDriveFileExpense = (propertyId: string, fileId: string, expenseId: string) => api.post(`/properties/${propertyId}/drive/files/${fileId}/link-expense`, { expense_id: expenseId }).then((r) => r.data.data);
 export const linkDriveFileDocument = (propertyId: string, fileId: string, documentId: string) => api.post(`/properties/${propertyId}/drive/files/${fileId}/link-document`, { document_id: documentId }).then((r) => r.data.data);
 export const registerDriveFileExpense = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/register-expense`, data).then((r) => r.data.data);
+export const registerDriveFileIncome = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/register-income`, data).then((r) => r.data.data);
+export const registerDriveFileDocument = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/register-document`, data).then((r) => r.data.data);
 export const saveDriveFileDocument = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/save-document`, data).then((r) => r.data.data);
 export const disconnectPropertyDrive = (propertyId: string) => api.delete(`/properties/${propertyId}/drive/disconnect`).then((r) => r.data.data);
 export const getConnections = () => withFallback(() => api.get("/connections").then((r) => r.data.data), { google_drive: { configured: false, scope: "", connections: [] }, airbnb_ical: { configured: true, method: "ical_per_property", connections: [] } });

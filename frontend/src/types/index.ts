@@ -126,6 +126,8 @@ export interface Reservation {
   income_amount_status?: "missing" | "manual" | "estimated" | "confirmed" | null;
   income_data_origin?: string | null;
   income_is_demo?: boolean | null;
+  income_guest_name?: string | null;
+  income_description?: string | null;
   source_method?: string;
   data_origin?: string;
   is_demo?: boolean;
@@ -183,6 +185,8 @@ export interface AirbnbStats {
   occupancy_next_30_days: number;
   incomes_missing_amount: number;
   guests_known?: number;
+  check_ins_current_month?: number;
+  check_outs_current_month?: number;
 }
 
 export interface DocumentItem {
@@ -210,6 +214,7 @@ export interface DocumentItem {
   days_to_expire?: number;
   property_alias?: string;
   property_address?: string;
+  deleted_at?: string | null;
 }
 
 export interface GroupedMonth<T> {
@@ -325,7 +330,7 @@ export interface DriveFile {
   document_type?: string;
   folder_type?: string;
   provider_hint?: string;
-  review_status?: "pending_review" | "registered" | "reviewed" | "linked" | "ignored";
+  review_status?: "pending_review" | "registered" | "reviewed" | "linked" | "registered_document" | "registered_expense" | "registered_income" | "ignored";
   source_provider?: string;
   source_method?: string;
   source_folder_name?: string;

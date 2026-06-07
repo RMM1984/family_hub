@@ -115,6 +115,7 @@ export async function getMonthlyStats(schemaName: string, propertyId: string, ye
        and coalesce(document_date, created_at::date) >= $2::date
        and coalesce(document_date, created_at::date) < ($2::date + interval '1 year')
        and coalesce(is_demo,false) = false
+       and deleted_at is null
        and coalesce(status, 'pending_review') <> 'ignored'
      group by 1`,
     [propertyId, yearStart],
