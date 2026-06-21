@@ -2,6 +2,7 @@ import { query } from "../config/db.js";
 import { env } from "../config/env.js";
 import { decryptSecret, encryptSecret } from "../utils/crypto.js";
 import { validateProperty } from "./crudService.js";
+import * as pricelabs from "./pricelabsService.js";
 import jwt from "jsonwebtoken";
 import type { AuthUser } from "../types.js";
 
@@ -589,7 +590,7 @@ export async function deleteFolder(schemaName: string, propertyId: string, folde
 }
 
 export async function listConnections(schemaName: string) {
-  const [result, airbnb] = await Promise.all([
+  const [result, airbnb, priceLabsConnection] = await Promise.all([
     query(
     `select pdi.id, pdi.provider, pdi.connected_at, pdi.last_sync_at, pdi.is_active,
             count(pdf.id)::int as folder_count
@@ -626,7 +627,8 @@ export async function listConnections(schemaName: string) {
        order by p.airbnb_last_sync_at desc nulls last, p.alias asc`,
       [],
       schemaName
-    )
+    ),
+    pricelabs.getPriceLabsConnection(schemaName)
   ]);
   return {
     google_drive: {
@@ -640,7 +642,8 @@ export async function listConnections(schemaName: string) {
       oauth: false,
       official_api: false,
       connections: airbnb.rows
-    }
+    },
+    pricelabs: priceLabsConnection
   };
 }
 

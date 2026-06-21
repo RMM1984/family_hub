@@ -16,6 +16,7 @@ const schema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().optional(),
   GOOGLE_TOKEN_ENCRYPTION_KEY: z.string().optional(),
+  APP_ENCRYPTION_KEY: z.string().optional(),
   GOOGLE_DRIVE_SCOPE: z.string().default("https://www.googleapis.com/auth/drive.metadata.readonly")
 });
 

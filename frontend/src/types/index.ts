@@ -352,6 +352,28 @@ export interface DriveState {
   scope: string;
 }
 
+export interface PriceLabsListing {
+  id?: string;
+  pricelabs_listing_id: string;
+  pms: string;
+  listing_name: string;
+  city_name?: string | null;
+  country?: string | null;
+  property_id?: string | null;
+  property_alias?: string | null;
+}
+
+export interface PriceLabsMapping {
+  id: string;
+  property_id: string;
+  property_alias: string;
+  property_address?: string | null;
+  pricelabs_listing_id: string;
+  pms: string;
+  listing_name: string;
+  mapped_at?: string;
+}
+
 export interface DashboardSummary {
   kpis: {
     net_profit_month: number;

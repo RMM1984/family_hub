@@ -2,15 +2,16 @@ import crypto from "node:crypto";
 import { env } from "../config/env.js";
 
 function key() {
-  if (!env.GOOGLE_TOKEN_ENCRYPTION_KEY) return null;
-  return crypto.createHash("sha256").update(env.GOOGLE_TOKEN_ENCRYPTION_KEY).digest();
+  const secret = env.APP_ENCRYPTION_KEY ?? env.GOOGLE_TOKEN_ENCRYPTION_KEY;
+  if (!secret) return null;
+  return crypto.createHash("sha256").update(secret).digest();
 }
 
 export function encryptSecret(value: string | undefined | null) {
   if (!value) return null;
   const encryptionKey = key();
   if (!encryptionKey) {
-    const err = new Error("Falta GOOGLE_TOKEN_ENCRYPTION_KEY para guardar tokens OAuth") as Error & { status: number };
+    const err = new Error("Falta APP_ENCRYPTION_KEY o GOOGLE_TOKEN_ENCRYPTION_KEY para guardar credenciales") as Error & { status: number };
     err.status = 400;
     throw err;
   }
@@ -25,7 +26,7 @@ export function decryptSecret(value: string | null | undefined) {
   if (!value) return null;
   const encryptionKey = key();
   if (!encryptionKey) {
-    const err = new Error("Falta GOOGLE_TOKEN_ENCRYPTION_KEY para leer tokens OAuth") as Error & { status: number };
+    const err = new Error("Falta APP_ENCRYPTION_KEY o GOOGLE_TOKEN_ENCRYPTION_KEY para leer credenciales") as Error & { status: number };
     err.status = 400;
     throw err;
   }

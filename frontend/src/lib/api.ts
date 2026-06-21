@@ -100,5 +100,10 @@ export const registerDriveFileIncome = (propertyId: string, fileId: string, data
 export const registerDriveFileDocument = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/register-document`, data).then((r) => r.data.data);
 export const saveDriveFileDocument = (propertyId: string, fileId: string, data: Record<string, unknown>) => api.post(`/properties/${propertyId}/drive/files/${fileId}/save-document`, data).then((r) => r.data.data);
 export const disconnectPropertyDrive = (propertyId: string) => api.delete(`/properties/${propertyId}/drive/disconnect`).then((r) => r.data.data);
-export const getConnections = () => withFallback(() => api.get("/connections").then((r) => r.data.data), { google_drive: { configured: false, scope: "", connections: [] }, airbnb_ical: { configured: true, method: "ical_per_property", connections: [] } });
+export const getConnections = () => withFallback(() => api.get("/connections").then((r) => r.data.data), { google_drive: { configured: false, scope: "", connections: [] }, airbnb_ical: { configured: true, method: "ical_per_property", connections: [] }, pricelabs: { configured: false, listings_cached: 0, mappings: [] } });
 export const getGoogleDriveFolders = () => withFallback(() => api.get("/connections/google-drive/folders").then((r) => r.data.data), []);
+export const savePriceLabsApiKey = (data: Record<string, unknown>) => api.post("/connections/pricelabs/api-key", data).then((r) => r.data.data);
+export const testPriceLabsConnection = () => api.post("/connections/pricelabs/test").then((r) => r.data.data);
+export const getPriceLabsListings = () => withFallback(() => api.get("/connections/pricelabs/listings").then((r) => r.data.data), { listings: [] });
+export const mapPriceLabsListing = (data: Record<string, unknown>) => api.post("/connections/pricelabs/mappings", data).then((r) => r.data.data);
+export const deletePriceLabsMapping = (mappingId: string) => api.delete(`/connections/pricelabs/mappings/${mappingId}`).then((r) => r.data.data);
