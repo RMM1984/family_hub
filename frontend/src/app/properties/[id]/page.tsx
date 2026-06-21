@@ -53,6 +53,7 @@ import {
   updateDriveFolder,
   updatePropertyFinancing,
   updatePropertyDocument,
+  updatePropertyExpense,
   updatePropertyIncome,
   updatePropertyOperation,
   updatePropertyReservation,
@@ -179,6 +180,7 @@ export default function PropertyDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["dashboard"] });
   };
   const expenseMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyExpense(propertyId, data), onSuccess: refresh });
+  const expenseUpdateMutation = useMutation({ mutationFn: ({ expenseId, data }: { expenseId: string; data: Record<string, unknown> }) => updatePropertyExpense(propertyId, expenseId, data), onSuccess: refresh });
   const monthlyExpenseMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => savePropertyMonthlyExpenses(propertyId, data), onSuccess: refresh });
   const incomeMutation = useMutation({ mutationFn: (data: Record<string, unknown>) => createPropertyIncome(propertyId, data), onSuccess: refresh });
   const incomeUpdateMutation = useMutation({ mutationFn: ({ incomeId, data }: { incomeId: string; data: Record<string, unknown> }) => updatePropertyIncome(propertyId, incomeId, data), onSuccess: refresh });
@@ -358,7 +360,11 @@ export default function PropertyDetailPage() {
               <Card className="p-4">
                 <YearSelector year={financeYear} onChange={setFinanceYear} />
               </Card>
-              <GroupedExpenseView data={groupedExpenses} />
+              <GroupedExpenseView
+                data={groupedExpenses}
+                pending={expenseUpdateMutation.isPending}
+                onUpdate={(expenseId, data) => expenseUpdateMutation.mutate({ expenseId, data })}
+              />
             </section>
           </section>
         </section>
@@ -801,7 +807,16 @@ function GroupedIncomeView({
   );
 }
 
-function GroupedExpenseView({ data }: { data?: GroupedFinance<Expense> }) {
+function GroupedExpenseView({
+  data,
+  pending,
+  onUpdate
+}: {
+  data?: GroupedFinance<Expense>;
+  pending: boolean;
+  onUpdate: (expenseId: string, data: Record<string, unknown>) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
   const months = (data?.months ?? []).filter((month) => month.items.length > 0);
   return (
     <section className="space-y-3">
@@ -810,7 +825,18 @@ function GroupedExpenseView({ data }: { data?: GroupedFinance<Expense> }) {
         <Card key={month.month} className="overflow-hidden">
           <MonthHeader label={month.label} totalLabel="Total gastos" total={Number(month.expense_total ?? 0)} />
           {month.items.map((item) => (
-            <Row key={item.id} title={item.provider ?? labelExpenseCategory(item.category)} subtitle={`${item.description ?? "Gasto"} · ${formatDate(item.expense_date)}`} amount={item.amount} />
+            <ExpenseRow
+              key={item.id}
+              item={item}
+              editing={editingId === item.id}
+              pending={pending}
+              onEdit={() => setEditingId(editingId === item.id ? null : item.id)}
+              onCancel={() => setEditingId(null)}
+              onUpdate={(data) => {
+                onUpdate(item.id, data);
+                setEditingId(null);
+              }}
+            />
           ))}
         </Card>
       ))}
@@ -1506,12 +1532,22 @@ const expenseInboxCategories = [
   { value: "water", label: "Agua" },
   { value: "gas", label: "Gas" },
   { value: "internet", label: "Internet" },
+  { value: "community", label: "Comunidad" },
   { value: "cleaning", label: "Limpieza" },
   { value: "supplies", label: "Utiles" },
+  { value: "supermarket", label: "Supermercado" },
+  { value: "ibi", label: "IBI" },
+  { value: "garbage", label: "Basuras" },
+  { value: "home_insurance", label: "Seguro hogar" },
+  { value: "liability_insurance", label: "Seguro responsabilidad" },
+  { value: "rental_insurance", label: "Seguro alquiler" },
   { value: "maintenance", label: "Mantenimiento" },
   { value: "repairs", label: "Reparaciones" },
   { value: "renovation", label: "Reforma" },
   { value: "furniture", label: "Mobiliario" },
+  { value: "mortgage", label: "Hipoteca" },
+  { value: "financing", label: "Financiacion" },
+  { value: "loan_interest", label: "Intereses" },
   { value: "other", label: "Otros" }
 ];
 
@@ -1855,6 +1891,24 @@ function parseNullableMoneyInput(value: FormDataEntryValue | null) {
   return Number.isFinite(amount) ? amount : null;
 }
 
+function parseOptionalInteger(value: FormDataEntryValue | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : null;
+}
+
+function stringOrNull(value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function formatInputMoney(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") return "";
+  const amount = Number(value);
+  return Number.isFinite(amount) ? String(amount).replace(".", ",") : "";
+}
+
 function formatMonthLabel(month: string) {
   return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(new Date(`${month}-01T12:00:00`));
 }
@@ -1885,15 +1939,92 @@ function monthlyExpenseDefaults(): MonthlyExpenseState["items"] {
   ];
 }
 
-function Row({ title, subtitle, amount }: { title: string; subtitle: string; amount: number | null | undefined }) {
+function ExpenseRow({
+  item,
+  editing,
+  pending,
+  onEdit,
+  onCancel,
+  onUpdate
+}: {
+  item: Expense;
+  editing: boolean;
+  pending: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onUpdate: (data: Record<string, unknown>) => void;
+}) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-slate-200 p-4 last:border-b-0">
-      <div className="min-w-0">
-        <p className="font-semibold">{title}</p>
-        <p className="truncate text-sm text-slate-500">{subtitle}</p>
+    <div className="border-b border-slate-200 p-4 last:border-b-0">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="font-semibold">{item.provider ?? labelExpenseCategory(item.category)}</p>
+          <p className="truncate text-sm text-slate-500">{item.description ?? "Gasto"} · {formatDate(item.expense_date)} · {labelExpenseCategory(item.category)}</p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <p className="font-bold">{formatCurrency(item.amount)}</p>
+          <Button disabled={pending} onClick={onEdit} className="bg-white text-ink hover:bg-slate-50">{editing ? "Cancelar" : "Editar"}</Button>
+        </div>
       </div>
-      <p className="font-bold">{formatCurrency(amount)}</p>
+      {editing && <ExpenseEditForm item={item} pending={pending} onCancel={onCancel} onSubmit={onUpdate} />}
     </div>
+  );
+}
+
+function ExpenseEditForm({
+  item,
+  pending,
+  onSubmit,
+  onCancel
+}: {
+  item: Expense;
+  pending: boolean;
+  onSubmit: (data: Record<string, unknown>) => void;
+  onCancel: () => void;
+}) {
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    onSubmit({
+      provider: stringOrNull(form.get("provider")),
+      amount: parseMoneyInput(form.get("amount")),
+      expense_date: String(form.get("expense_date") ?? "") || item.expense_date,
+      category: String(form.get("category") ?? item.category),
+      description: stringOrNull(form.get("description")),
+      currency: "EUR",
+      is_demo: false
+    });
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Proveedor</span>
+        <input name="provider" defaultValue={item.provider ?? ""} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Importe</span>
+        <input name="amount" inputMode="decimal" defaultValue={formatInputMoney(item.amount)} required className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Fecha</span>
+        <input name="expense_date" type="date" defaultValue={dateInputValue(item.expense_date)} required className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Categoria</span>
+        <select name="category" defaultValue={item.category ?? "other"} className="h-10 w-full rounded-md border border-slate-300 px-3">
+          {expenseInboxCategories.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </label>
+      <label className="block md:col-span-2">
+        <span className="mb-1 block text-sm font-medium">Descripcion</span>
+        <input name="description" defaultValue={item.description ?? ""} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+      </label>
+      <div className="flex flex-wrap gap-2 md:col-span-2">
+        <Button disabled={pending} className="bg-ink">Guardar gasto</Button>
+        <Button type="button" disabled={pending} onClick={onCancel} className="bg-white text-ink hover:bg-slate-50">Cancelar</Button>
+      </div>
+    </form>
   );
 }
 
@@ -1953,11 +2084,11 @@ function IncomeEditForm({
       amount,
       amount_status: amount === null ? "missing" : amountStatus,
       income_date: String(form.get("income_date") ?? "") || item.income_date,
-      description: String(form.get("description") ?? ""),
-      guest_name: String(form.get("guest_name") ?? ""),
+      description: stringOrNull(form.get("description")),
+      guest_name: stringOrNull(form.get("guest_name")),
       check_in: String(form.get("check_in") ?? "") || null,
       check_out: String(form.get("check_out") ?? "") || null,
-      nights: Number(form.get("nights") ?? item.nights ?? 0),
+      nights: parseOptionalInteger(form.get("nights")),
       currency: "EUR",
       is_demo: false
     });
@@ -1967,7 +2098,7 @@ function IncomeEditForm({
     <form onSubmit={submit} className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
       <label className="block">
         <span className="mb-1 block text-sm font-medium">Importe</span>
-        <input name="amount" inputMode="decimal" defaultValue={item.amount === null || item.amount === undefined ? "" : String(item.amount).replace(".", ",")} className="h-10 w-full rounded-md border border-slate-300 px-3" />
+        <input name="amount" inputMode="decimal" defaultValue={formatInputMoney(item.amount)} className="h-10 w-full rounded-md border border-slate-300 px-3" />
       </label>
       <label className="block">
         <span className="mb-1 block text-sm font-medium">Estado importe</span>
@@ -2331,7 +2462,7 @@ function SimpleForm({ title, fields, labels, defaults, pending, onSubmit }: { ti
     const data: Record<string, unknown> = { ...defaults };
     fields.forEach((field) => {
       const value = String(form.get(field) ?? "");
-      data[field] = ["amount", "cost"].includes(field) ? Number(value) : field === "nights" ? Number(value || 0) : value;
+      data[field] = ["amount", "cost"].includes(field) ? parseMoneyInput(form.get(field)) : field === "nights" ? parseOptionalInteger(form.get(field)) ?? 0 : value;
     });
     onSubmit(data);
     event.currentTarget.reset();

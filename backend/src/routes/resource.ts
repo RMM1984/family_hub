@@ -57,7 +57,7 @@ export function resourceRouter(table: "properties" | "expenses" | "income" | "do
       res.status(201).json({ data: await crud.createByProperty("expenses", req.schemaName!, String(req.params.id), req.body) });
     });
     router.patch("/:id/expenses/:expenseId", requireRole("admin"), async (req: AuthedRequest, res) => {
-      res.json({ data: await crud.update("expenses", req.schemaName!, String(req.params.expenseId), req.body) });
+      res.json({ data: await crud.updateByProperty("expenses", req.schemaName!, String(req.params.id), String(req.params.expenseId), req.body ?? {}) });
     });
     router.get("/:id/income", async (req: AuthedRequest, res) => {
       res.json({ data: await crud.listByProperty("income", req.schemaName!, String(req.params.id)) });
@@ -66,7 +66,7 @@ export function resourceRouter(table: "properties" | "expenses" | "income" | "do
       res.status(201).json({ data: await crud.createByProperty("income", req.schemaName!, String(req.params.id), req.body) });
     });
     router.patch("/:id/income/:incomeId", requireRole("admin"), async (req: AuthedRequest, res) => {
-      res.json({ data: await crud.update("income", req.schemaName!, String(req.params.incomeId), req.body) });
+      res.json({ data: await crud.updateByProperty("income", req.schemaName!, String(req.params.id), String(req.params.incomeId), req.body ?? {}) });
     });
     router.get("/:id/documents", async (req: AuthedRequest, res) => {
       res.json({ data: await crud.listByProperty("documents", req.schemaName!, String(req.params.id)) });

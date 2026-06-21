@@ -116,11 +116,40 @@ export async function update(table: string, schemaName: string, id: string, data
     await validateScopedProperty(table, schemaName, data.property_id);
   }
   const keys = Object.keys(data).filter((key) => data[key] !== undefined && key !== "id");
+  if (keys.length === 0) return getById(table, schemaName, id);
   const values = keys.map((key) => data[key]);
   const sets = keys.map((key, index) => `${key} = $${index + 1}`);
   values.push(id);
   const result = await query(`update ${table} set ${sets.join(", ")} where id = $${values.length} returning *`, values, schemaName);
   return result.rows[0] ?? null;
+}
+
+export async function updateByProperty(table: "expenses" | "income" | "documents", schemaName: string, propertyId: string, id: string, data: Record<string, unknown>) {
+  assertTable(table);
+  await validateProperty(schemaName, propertyId);
+  const keys = Object.keys(data).filter((key) => data[key] !== undefined && key !== "id" && key !== "property_id");
+  if (keys.length === 0) return getById(table, schemaName, id);
+  const values = keys.map((key) => data[key]);
+  const sets = keys.map((key, index) => `${key} = $${index + 1}`);
+  values.push(id, propertyId);
+  const result = await query(
+    `update ${table} set ${sets.join(", ")}, updated_at = now() where id = $${values.length - 1} and property_id = $${values.length} returning *`,
+    values,
+    schemaName
+  );
+  if (!result.rows[0]) {
+    const err = new Error("Registro no encontrado en esta vivienda") as Error & { status: number };
+    err.status = 404;
+    throw err;
+  }
+  if (table === "income" && result.rows[0].reservation_id) {
+    await query(
+      "update property_reservations set amount_status = $1 where property_id = $2 and id = $3",
+      [result.rows[0].amount_status ?? "missing", propertyId, result.rows[0].reservation_id],
+      schemaName
+    );
+  }
+  return result.rows[0];
 }
 
 export async function remove(table: string, schemaName: string, id: string) {
